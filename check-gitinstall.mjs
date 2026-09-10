@@ -12,11 +12,11 @@
  */
 import * as esbuild from "esbuild";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, cpSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildOptions, filterEntrypoint } from "./check-lib.mjs";
+import { buildOptions } from "./check-lib.mjs";
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 const SOURCE = /\.tsx?$/;
@@ -49,16 +49,18 @@ try {
     copied.push(name);
     if (tracked !== null && !tracked.has(name)) untracked.push(name);
   }
+  for (const runtime of ["client", "server", "shared"]) {
+    cpSync(join(DIR, runtime), join(staging, runtime), { recursive: true });
+  }
   // Only the entry point needs to exist for the compile; the rest are resolved
   // from it, and anything missing surfaces as a resolution error below.
   copyFileSync(join(DIR, "paseo-plugin.json"), join(staging, "paseo-plugin.json"));
 
-  const entry = resolve(staging, "index.ts");
-  const source = readFileSync(entry, "utf8");
   for (const target of ["client", "server"]) {
-    const { filtered } = filterEntrypoint(source, target);
+    const entry = resolve(staging, target === "client" ? "index.client.tsx" : "index.server.ts");
+    const source = readFileSync(entry, "utf8");
     try {
-      await esbuild.build(buildOptions(entry, staging, filtered, target));
+      await esbuild.build(buildOptions(entry, staging, source, target));
       console.log(`  ✓ ${target}: compiles with no installed dependencies`);
     } catch (error) {
       const messages = (error?.errors ?? []).map((item) => item.text);

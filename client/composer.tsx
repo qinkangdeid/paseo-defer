@@ -1,4 +1,5 @@
-import { type PluginHostProps, type PluginTheme, useRpc } from "@getpaseo/plugin";
+import type { PluginTheme } from "@getpaseo/plugin";
+import { type PluginHostProps, useRpc } from "@getpaseo/plugin/client";
 import { useMutation } from "@tanstack/react-query";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
@@ -9,7 +10,8 @@ import {
   type Deferred,
   type PillMode,
   type Trigger,
-} from "./defer.shared";
+} from "../shared/defer";
+import { onComposerDraftOffered } from "./handoff";
 import {
   clockPlaceholder,
   describeInstant,
@@ -21,7 +23,7 @@ import {
   triggersMatch,
   uses12HourClock,
   type Meridiem,
-} from "./format.shared";
+} from "../shared/format";
 
 type Layout = PluginHostProps["layout"];
 type Choice = { id: string; label: string; trigger: () => Trigger | null };
@@ -36,9 +38,13 @@ const PRESETS = [
   { id: "3h", label: "3h", ms: 180 * MINUTE },
 ];
 
-/** Which chip, wait, and clock text reproduce an already queued trigger. */
-function controlsForItem(item: Deferred): Controls {
-  const trigger = item.trigger;
+/**
+ * Which chip, wait, and clock text reproduce a trigger — for an edit, and for a
+ * timing that arrived with a hand-over. `at` is shown as the clock time it
+ * resolves to: for a queued message that is `dueAt`, and for an offer the
+ * instant the trigger already carries.
+ */
+function controlsForTrigger(trigger: Trigger, dueAt: string | null): Controls {
   if (trigger.kind === "sessionReset") return { selected: "reset", clock: "", duration: "" };
   if (trigger.kind === "after") {
     const preset = PRESETS.find((candidate) => candidate.ms === trigger.ms);
@@ -47,7 +53,12 @@ function controlsForItem(item: Deferred): Controls {
     // resolved to, so leaving the timing alone cannot re-anchor it.
     return { selected: "in", clock: "", duration: formatDuration(trigger.ms) };
   }
-  return { selected: "at", duration: "", clock: item.dueAt === null ? "" : formatClock(item.dueAt) };
+  const at = dueAt ?? trigger.iso;
+  return { selected: "at", duration: "", clock: formatClock(at) };
+}
+
+function controlsForItem(item: Deferred): Controls {
+  return controlsForTrigger(item.trigger, item.dueAt);
 }
 
 /** One style sheet for every Defer view, so the panel and surface stay in step. */
@@ -158,6 +169,12 @@ export interface DeferComposerProps {
    * saving a change is not a reason to move the user.
    */
   onCreated?: ((item: Deferred) => void) | undefined;
+  /**
+   * Accept the text already typed in this session's own composer when Defer was
+   * opened from it. Only the in-session panel sets it: the overview is reached
+   * from the sidebar and ⌘K, where there is no one composer to take from.
+   */
+  acceptComposerDraft?: boolean | undefined;
 }
 
 /** Message box, timing chips, and the create/edit submit shared by both views. */
@@ -171,6 +188,7 @@ export function DeferComposer({
   onEditingChange,
   onSaved,
   onCreated,
+  acceptComposerDraft,
 }: DeferComposerProps) {
   const create = useRpc(createDeferred);
   const update = useRpc(updateDeferred);
@@ -185,6 +203,10 @@ export function DeferComposer({
 
   const editingId = editing?.id ?? null;
   const loadedId = useRef<string | null>(null);
+  /** The last text taken from the session's composer, while it is still that. */
+  const handedOver = useRef<string | null>(null);
+  const currentText = useRef(text);
+  currentText.current = text;
 
   // Load the form when an edit starts, and clear it when one ends. Keyed on the
   // id so polling the queue does not overwrite what is being typed.
@@ -192,6 +214,7 @@ export function DeferComposer({
     if (loadedId.current === editingId) return;
     loadedId.current = editingId;
     setProblem(null);
+    handedOver.current = null;
     if (editing === null) {
       setText("");
       setClockInput("");
@@ -207,6 +230,30 @@ export function DeferComposer({
     // The loaded clock text carries its own AM/PM, so nothing needs pinning.
     setMeridiem(null);
   }, [editing, editingId]);
+
+  // Text offered by the pill when Defer was opened from this session's composer.
+  // It fills an empty box, or replaces an earlier hand-over that has not been
+  // touched, and otherwise leaves what is there: a half-written deferred message
+  // outranks whatever is in the prompt box.
+  useEffect(() => {
+    if (acceptComposerDraft !== true || agentId === null || editingId !== null) return;
+    return onComposerDraftOffered(agentId, (offer) => {
+      // Timing that came with the offer was written out by the user, so it is
+      // applied whether or not the message box takes the text with it.
+      if (offer.trigger !== null) {
+        const controls = controlsForTrigger(offer.trigger, null);
+        setSelected(controls.selected);
+        setClockInput(controls.clock);
+        setDurationInput(controls.duration);
+        setMeridiem(null);
+      }
+      if (offer.text.trim() === "") return;
+      const current = currentText.current;
+      if (current.trim() !== "" && current !== handedOver.current) return;
+      handedOver.current = offer.text;
+      setText(offer.text);
+    });
+  }, [acceptComposerDraft, agentId, editingId]);
 
   const hour12 = uses12HourClock();
 
@@ -267,6 +314,7 @@ export function DeferComposer({
       return { created: null };
     },
     onSuccess: ({ created }) => {
+      handedOver.current = null;
       setText("");
       setClockInput("");
       setDurationInput("");
@@ -281,6 +329,9 @@ export function DeferComposer({
   });
 
   const isEditing = editing !== null;
+  // Only while the hand-over is still exactly what was handed over; one edit and
+  // it is the user's own message.
+  const fromComposer = text !== "" && text === handedOver.current;
   const canSubmit =
     text.trim() !== "" && !submit.isPending && (isEditing || agentId !== null);
 
@@ -310,6 +361,13 @@ export function DeferComposer({
         multiline
         accessibilityLabel="Message to defer"
       />
+
+      {fromComposer ? (
+        <Text style={styles.hint}>
+          Taken from this session's prompt box, which still holds it: clear it there unless you mean
+          to send it now as well.
+        </Text>
+      ) : null}
 
       <View style={styles.row}>
         {choices.map((choice) => {

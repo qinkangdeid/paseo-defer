@@ -1,7 +1,7 @@
 /**
  * Drives the composer-pill client entrypoint outside the app.
  *
- * `check-bundles.mjs` proves `addClientSide` is registered; this proves the
+ * `check-bundles.mjs` proves the client entry is registered; this proves the
  * contribution behaves: one pill per session that has something waiting, none
  * for an empty queue, a panel opened on press, and every timer and
  * subscription released on cleanup. Paseo tears the entrypoint down on reload,
@@ -23,6 +23,9 @@ const DIR = dirname(fileURLToPath(import.meta.url));
  */
 const react = {
   useCallback: (fn) => fn,
+  // Nothing here re-renders, so a setter is a no-op: the component's only state
+  // is the chip it is waiting on, which is cosmetic.
+  useState: (initial) => [typeof initial === "function" ? initial() : initial, () => undefined],
   useMemo: (fn) => fn(),
   useRef: (value) => ({ current: value }),
   useEffect: () => undefined,
@@ -80,15 +83,31 @@ const cardOf = (tree) =>
 
 const textOf = (tree) => [...walk(tree)].filter((node) => typeof node === "string").join(" ");
 
+/** What the pill said out loud, in the order it said it. */
+const toasts = {
+  shown: [],
+  errors: [],
+  show(message) {
+    toasts.shown.push(message);
+  },
+  error(message) {
+    toasts.errors.push(message);
+  },
+};
+
 /** Host modules Paseo provides to client code; anything else must fail. */
 const STUBS = {
   react,
   "react/jsx-runtime": jsxRuntime,
   "react-native": { View: "View", Text: "Text", Pressable: "Pressable" },
   "@tanstack/react-query": {},
-  "@getpaseo/plugin": { Icon: () => null, defineRpc: (d) => d },
-  "@getpaseo/plugin/react-native": { Icon: () => null, Modal: () => null, useToast: () => ({}) },
-  "@getpaseo/plugin/server": { defineRpc: (d) => d, defineAttachmentSource: (d) => d },
+  "@getpaseo/plugin": { defineRpc: (d) => d },
+  "@getpaseo/plugin/client": {},
+  "@getpaseo/plugin/client/react-native": {
+    Icon: () => null,
+    Modal: () => null,
+    useToast: () => toasts,
+  },
 };
 
 const failures = [];
@@ -102,9 +121,10 @@ function check(condition, description) {
  * share a module instance exactly as they do inside Paseo's client bundle.
  */
 const ENTRY = resolve(DIR, ".check-pill.entry.ts");
-const ENTRY_SOURCE = `export { contributeClient } from "./pill.client";
-export { notifyDeferChanged } from "./refresh.client";
-export { pillLabel } from "./format.shared";
+const ENTRY_SOURCE = `export { contributeClient } from "./client/pill";
+export { notifyDeferChanged } from "./client/refresh";
+export { pillLabel } from "./shared/format";
+export { onComposerDraftOffered } from "./client/handoff";
 `;
 
 async function loadClientGraph() {
@@ -192,12 +212,14 @@ function deferred(id, agentId, dueInMs, state = "pending") {
 function createFakeClient({ items, agents, pillMode }) {
   const pills = [];
   const opened = [];
+  const created = [];
   let agentHandler = null;
   let unsubscribed = false;
   let listCalls = 0;
   return {
     pills,
     opened,
+    created,
     get listCalls() {
       return listCalls;
     },
@@ -225,7 +247,24 @@ function createFakeClient({ items, agents, pillMode }) {
           },
         },
       },
-      async rpc(contract) {
+      async rpc(contract, input) {
+        if (contract.name === "defer.create") {
+          created.push(input);
+          return {
+            item: {
+              id: `created-${created.length}`,
+              agentId: input.agentId,
+              text: input.text,
+              trigger: input.trigger,
+              dueAt: new Date(Date.now() + (input.trigger.ms ?? 0)).toISOString(),
+              anchorResetsAt: null,
+              createdAt: new Date().toISOString(),
+              state: "pending",
+              settledAt: null,
+              error: null,
+            },
+          };
+        }
         if (contract.name !== "defer.list") throw new Error(`unexpected rpc ${contract.name}`);
         return {
           items: items(),
@@ -250,6 +289,31 @@ function createFakeClient({ items, agents, pillMode }) {
 }
 
 const live = (fake) => fake.pills.filter((entry) => !entry.removed);
+
+/** Stands in for the app's own draft store, which a press reads on the way out. */
+let composerDraft = "";
+Object.defineProperty(globalThis, "localStorage", {
+  configurable: true,
+  value: {
+    getItem: () =>
+      JSON.stringify({
+        state: {
+          drafts: {
+            "agent:srv_1:agent-1": {
+              input: { text: composerDraft, attachments: [] },
+              lifecycle: "active",
+              updatedAt: 1,
+              version: 1,
+            },
+          },
+        },
+        version: 5,
+      }),
+  },
+});
+
+/** The window in which a press inside the card is ignored by the pill. */
+const CARD_ECHO_MS = 450;
 
 const timers = installTimerTracker();
 /** Real timers, so waiting for the entrypoint's debounce is not self-referential. */
@@ -298,6 +362,27 @@ try {
   check(textOf(draw()).includes("Defer"), "an idle pill reads as a Defer button");
   check(cardOf(draw()) === undefined, "an idle pill shows no card");
 
+  // A plugin draws inside the host pill's own padding, so a hover region left
+  // at its natural size answers over the label and nowhere else. Cancelling
+  // that padding with an equal negative margin is what makes the whole pill
+  // hoverable, and it has to leave the measured size alone.
+  const root = draw().props?.style ?? {};
+  check(root.alignSelf === "stretch", "the pill fills the host's pill vertically");
+  check(
+    root.marginHorizontal === -root.paddingHorizontal && root.paddingHorizontal > 0,
+    "the host's horizontal padding is cancelled and re-added, so hovering answers to the edge",
+  );
+  check(
+    root.marginVertical === -root.paddingVertical && root.paddingVertical > 0,
+    "the same vertically, where the host pill is more than twice the label's height",
+  );
+  check(typeof draw().props?.onPointerEnter === "function", "the whole region takes the pointer");
+
+  // An empty prompt box and an empty queue: the pill is a plain button.
+  const handed = [];
+  const stopListening = graph.onComposerDraftOffered("agent-1", (offer) => handed.push(offer.text));
+
+  composerDraft = "";
   registration?.onPress();
   check(
     fake.opened.length === 1 &&
@@ -307,6 +392,75 @@ try {
     "pressing an idle pill opens the panel straight away",
   );
   check(cardOf(draw()) === undefined, "pressing an idle pill opens no card");
+  check(handed.length === 0, "an empty prompt box hands over nothing");
+
+  // Something half-written changes that: the card offers to defer it outright.
+  composerDraft = "half a prompt";
+  registration?.onPress();
+  const quick = draw();
+  check(cardOf(quick) !== undefined, "a half-written prompt raises the card instead");
+  check(fake.opened.length === 1, "raising the card opens no panel");
+  check(textOf(quick).includes("half a prompt"), "the card shows what is in the prompt box");
+  const chip = (label) =>
+    [...walk(draw())].find(
+      (node) => typeof node === "object" && node.props?.accessibilityLabel === label,
+    );
+  for (const label of ["Defer this by 15m", "Defer this by 1h", "Defer this by 3h"]) {
+    check(chip(label) !== undefined, `the card offers ${label.replace("Defer this by ", "")}`);
+  }
+
+  chip("Defer this by 1h")?.props.onPress();
+  await wait(50);
+  check(fake.created.length === 1, "a chip queues the message without a panel");
+  check(fake.created[0]?.text === "half a prompt", "it queues what is in the prompt box");
+  check(fake.created[0]?.agentId === "agent-1", "it queues it for that session");
+  check(
+    fake.created[0]?.trigger?.kind === "after" && fake.created[0]?.trigger?.ms === 3_600_000,
+    "the chip's own wait is the trigger",
+  );
+  check(fake.opened.length === 1, "a chip press opens no panel");
+  check(cardOf(draw()) === undefined, "queueing from the card puts the card away");
+  // That same click reaches Paseo's pressable under the card, which must not
+  // raise the card again over the message it has just queued.
+  registration?.onPress();
+  check(cardOf(draw()) === undefined, "the click echoing down from a chip leaves the card away");
+  // Past the echo window, so the presses below are read as presses again.
+  await wait(CARD_ECHO_MS);
+  check(
+    toasts.shown.some((message) => message.includes("prompt box still holds it")),
+    "the confirmation says the prompt box was not emptied",
+  );
+  check(toasts.errors.length === 0, "queueing from the card raises no error");
+
+  // On web the chip's click also reaches the card under it, which must not then
+  // open the panel the chip just made unnecessary. Same tree, same refs.
+  registration?.onPress();
+  const echo = draw();
+  [...walk(echo)]
+    .find((node) => typeof node === "object" && node.props?.accessibilityLabel === "Defer this by 15m")
+    ?.props.onPress();
+  cardOf(echo)?.props.onPress();
+  check(fake.opened.length === 1, "the click echoing down from a chip does not open the panel");
+  await wait(CARD_ECHO_MS);
+
+  // An empty prompt box while the chip was up: nothing is queued from nothing.
+  const queuedBefore = fake.created.length;
+  registration?.onPress();
+  const stale = draw();
+  composerDraft = "";
+  [...walk(stale)]
+    .find((node) => typeof node === "object" && node.props?.accessibilityLabel === "Defer this by 15m")
+    ?.props.onPress();
+  await wait(50);
+  check(fake.created.length === queuedBefore, "an emptied prompt box queues nothing");
+  check(
+    toasts.errors.some((message) => message.includes("nothing in the prompt box")),
+    "an emptied prompt box says why nothing happened",
+  );
+  // The failed press echoes down like any other; put the card away after it.
+  await wait(CARD_ECHO_MS);
+  registration?.onPress();
+  check(cardOf(draw()) === undefined, "the card closes again after all that");
 
   // Queue something for that session: the same pill becomes a status.
   items = [deferred("one", "agent-1", 900_000)];
@@ -325,13 +479,16 @@ try {
   check(cardOf(draw()) === undefined, "pressing the pill again closes the card");
   check(fake.opened.length === 1, "closing the card opens no panel");
 
+  composerDraft = "and this too";
   registration?.onPress();
   cardOf(draw())?.props.onPress();
   check(
     fake.opened.length === 2 && fake.opened[1].options?.agentId === "agent-1",
     "pressing the card opens the panel for that session",
   );
+  check(handed.join("|") === "and this too", "the card opens the panel with the composer draft too");
   check(cardOf(draw()) === undefined, "opening the panel puts the card away");
+  stopListening();
 
   // On web that same click also reaches Paseo's pressable under the card.
   registration?.onPress();

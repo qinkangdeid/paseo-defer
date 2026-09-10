@@ -7,6 +7,8 @@
  * pill live in the same client bundle, so a plain module-scope fan-out closes
  * that gap without another daemon round trip.
  */
+import { clientBridge } from "../shared/bridge";
+
 type Listener = () => void;
 
 const listeners = new Set<Listener>();
@@ -29,3 +31,6 @@ export function notifyDeferChanged(): void {
     }
   }
 }
+
+// Exposed through the shared bridge to client views and the v0.8 entrypoint.
+clientBridge.changed = notifyDeferChanged;

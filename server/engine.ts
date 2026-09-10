@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { store } from "./store.server";
+import { store } from "./store";
 import {
   clearCaches,
   fetchSessionResetsAt,
   readAgentStates,
   withDaemon,
-} from "./daemon.server";
-import { lifecycle } from "./lifecycle.shared";
-import type { Deferred, Trigger } from "./defer.shared";
+} from "./daemon";
+import { lifecycle } from "../shared/lifecycle";
+import type { Deferred, Trigger } from "../shared/defer";
 
 const TICK_MS = 15_000;
 

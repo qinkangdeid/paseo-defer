@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 /**
- * Short-lived daemon connections.
+ * Short-lived daemon connections for the server runtime.
  *
  * The engine has no `paseo` handle (only RPC handlers get one) and needs
  * `provider.usage.list`, which the plugin SDK does not expose, so it talks to

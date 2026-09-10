@@ -12,32 +12,26 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-/** Registration calls the compiler deletes from each target's entry point. */
-export const REMOVED_REGISTRATIONS = {
-  client: new Set(["handle"]),
-  server: new Set([
-    "addSurface",
-    "addSidebarItem",
-    "addWorkspacePanel",
-    "addCommandCenterItem",
-    "addClientSide",
-    "addAttachmentSource",
-    "addTheme",
-    "addTimelineTransformer",
-    "addTimelineRenderer",
-  ]),
-};
+/** Runtime entries replace the mixed-entry registration filter in Paseo v0.8. */
+export const REMOVED_REGISTRATIONS = { client: new Set(), server: new Set() };
 
 /** Specifiers the daemon hands to the plugin's own runtime instead of bundling. */
 export const SDK_SPECIFIERS = [
   "@getpaseo/plugin",
+  "@getpaseo/plugin/client",
+  "@getpaseo/plugin/client/react-native",
+  "@getpaseo/plugin/client/ui",
   "@getpaseo/plugin/server",
-  "@getpaseo/plugin/react-native",
+  "@getpaseo/plugin/server/provider",
+  "@getpaseo/plugin/server/acp",
 ];
 
 /** Host modules marked external for the client target. */
 export const CLIENT_EXTERNALS = [
-  ...SDK_SPECIFIERS,
+  "@getpaseo/plugin",
+  "@getpaseo/plugin/client",
+  "@getpaseo/plugin/client/react-native",
+  "@getpaseo/plugin/client/ui",
   "@tanstack/react-query",
   "react",
   "react/jsx-runtime",
@@ -46,7 +40,13 @@ export const CLIENT_EXTERNALS = [
 ];
 
 /** Host modules marked external for the server target. */
-export const SERVER_EXTERNALS = [...SDK_SPECIFIERS, "zod"];
+export const SERVER_EXTERNALS = [
+  "@getpaseo/plugin",
+  "@getpaseo/plugin/server",
+  "@getpaseo/plugin/server/provider",
+  "@getpaseo/plugin/server/acp",
+  "zod",
+];
 
 /**
  * Client-only modules the compiler replaces with `{}` in the server bundle
@@ -57,7 +57,9 @@ export const CLIENT_ONLY_MODULES = [
   "react",
   "react/jsx-runtime",
   "react-native",
-  "@getpaseo/plugin/react-native",
+  "@getpaseo/plugin/client",
+  "@getpaseo/plugin/client/react-native",
+  "@getpaseo/plugin/client/ui",
 ];
 
 function exactSpecifierFilter(specifiers) {
@@ -87,9 +89,9 @@ export function unusedPlatformModulePlugin(target) {
 }
 
 export const moduleTarget = (specifier) =>
-  /\.client(\.[cm]?[jt]sx?)?$/.test(specifier)
+  specifier.startsWith("./client/") || specifier.startsWith("../client/")
     ? "client"
-    : /\.server(\.[cm]?[jt]sx?)?$/.test(specifier)
+    : specifier.startsWith("./server/") || specifier.startsWith("../server/")
       ? "server"
       : null;
 
@@ -101,7 +103,7 @@ export const moduleTarget = (specifier) =>
 export function filterEntrypoint(source, target) {
   const ast = parse(source, { sourceType: "module", plugins: ["typescript", "jsx"] });
   const fn = ast.program.body.find((node) => node.type === "ExportDefaultDeclaration")?.declaration;
-  if (!fn?.params?.[0]?.name) throw new Error("index.ts must default-export contribute(plugin)");
+  if (!fn?.params?.[0]?.name) throw new Error("runtime entry must default-export contribute(context)");
   const contextName = fn.params[0].name;
   const ranges = [];
 

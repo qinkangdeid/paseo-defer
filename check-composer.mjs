@@ -165,8 +165,9 @@ const THEME = {
 };
 
 const ENTRY = resolve(DIR, `.check-composer.${LOCALE}.entry.ts`);
-const ENTRY_SOURCE = `export { DeferComposer, deferStyles } from "./composer.client";
-export { clockPlaceholder, formatDuration, uses12HourClock } from "./format.shared";
+const ENTRY_SOURCE = `export { DeferComposer, deferStyles } from "./client/composer";
+export { clockPlaceholder, formatDuration, uses12HourClock } from "./shared/format";
+export { offerComposerDraft } from "./client/handoff";
 `;
 
 /** Records every RPC the composer makes, and answers them plausibly. */
@@ -220,7 +221,7 @@ async function loadComposer() {
         "react-native",
         "@tanstack/react-query",
         "@getpaseo/plugin",
-        "@getpaseo/plugin/server",
+        "@getpaseo/plugin/client",
         "zod",
       ],
       absWorkingDir: DIR,
@@ -234,7 +235,29 @@ async function loadComposer() {
 
 const zod = await import("zod");
 
-async function harness({ editing = null } = {}) {
+/** Stands in for the app's own draft store, which the hand-over reads. */
+let composerDraft = "";
+Object.defineProperty(globalThis, "localStorage", {
+  configurable: true,
+  value: {
+    getItem: () =>
+      JSON.stringify({
+        state: {
+          drafts: {
+            "agent:srv_1:agent-1": {
+              input: { text: composerDraft, attachments: [] },
+              lifecycle: "active",
+              updatedAt: 1,
+              version: 1,
+            },
+          },
+        },
+        version: 5,
+      }),
+  },
+});
+
+async function harness({ editing = null, acceptComposerDraft = false, beforeMount } = {}) {
   const rpc = createRpcLog();
   const created = [];
   const saved = [];
@@ -259,8 +282,8 @@ async function harness({ editing = null } = {}) {
             .then(onSuccess, onError),
       }),
     },
-    "@getpaseo/plugin": { useRpc: rpc.useRpc, Icon: () => null },
-    "@getpaseo/plugin/server": { defineRpc: (d) => d },
+    "@getpaseo/plugin": { defineRpc: (d) => d },
+    "@getpaseo/plugin/client": { useRpc: rpc.useRpc },
   };
   const graph = instantiateBundle(CODE, (id) => {
     if (id === "zod") return zod;
@@ -281,8 +304,12 @@ async function harness({ editing = null } = {}) {
     },
     onSaved: () => saved.push(true),
     onCreated: (item) => created.push(item),
+    acceptComposerDraft,
   });
 
+  // A press reads the composer and opens the panel, in that order, so an offer
+  // made here is the one a real panel finds waiting for it.
+  beforeMount?.(graph);
   runtime.renderNow();
 
   const nodes = () => [...walk(runtime.tree())];
@@ -296,6 +323,7 @@ async function harness({ editing = null } = {}) {
     saved,
     find,
     text,
+    value: (label) => find(label)?.props.value,
     press: (label) => find(label)?.props.onPress(),
     type: (label, value) => find(label)?.props.onChangeText(value),
     selected: (label) => find(label)?.props.accessibilityState?.selected === true,
@@ -438,6 +466,53 @@ try {
   check(
     changed?.input.trigger?.kind === "after" && changed.input.trigger.ms === 3_600_000,
     "choosing a different option does re-anchor it",
+  );
+  // --- Text handed over from the session's own composer ---
+  composerDraft = "look at the failing test";
+  const handed = await harness({
+    acceptComposerDraft: true,
+    beforeMount: (graph) => graph.offerComposerDraft("agent-1"),
+  });
+  check(
+    handed.value("Message to defer") === "look at the failing test",
+    "what was typed in the prompt box is in the message box as the panel opens",
+  );
+  check(handed.text().includes("still holds it"), "a hand-over says the prompt box still has it");
+
+  composerDraft = "a later prompt";
+  handed.graph.offerComposerDraft("agent-1");
+  check(
+    handed.value("Message to defer") === "a later prompt",
+    "an untouched hand-over gives way to a newer one",
+  );
+
+  handed.type("Message to defer", "my own words");
+  check(!handed.text().includes("still holds it"), "an edited hand-over is the user's own message");
+  composerDraft = "yet another prompt";
+  handed.graph.offerComposerDraft("agent-1");
+  check(
+    handed.value("Message to defer") === "my own words",
+    "a hand-over never overwrites a message being written",
+  );
+
+  handed.type("Message to defer", "");
+  handed.graph.offerComposerDraft("agent-1");
+  check(
+    handed.value("Message to defer") === "yet another prompt",
+    "an emptied box takes the next hand-over",
+  );
+
+  handed.press("Defer this message");
+  await settle();
+  check(handed.value("Message to defer") === "", "queueing a handed-over message clears the box");
+  check(!handed.text().includes("still holds it"), "queueing puts the hand-over notice away");
+
+  const unasked = await harness({
+    beforeMount: (graph) => graph.offerComposerDraft("agent-1"),
+  });
+  check(
+    unasked.value("Message to defer") === "",
+    "a view that was not opened from a composer is handed nothing",
   );
 } catch (error) {
   failures.push(error instanceof Error ? (error.stack ?? error.message) : String(error));

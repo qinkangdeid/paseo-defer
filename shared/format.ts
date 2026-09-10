@@ -1,4 +1,4 @@
-import type { Deferred, Trigger } from "./defer.shared";
+import type { Deferred, Trigger } from "./defer";
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -264,4 +264,95 @@ export function pillLabel(items: readonly Deferred[]): string {
     return item.anchorResetsAt === null ? "on reset" : `reset ${formatRelative(item.anchorResetsAt)}`;
   }
   return formatRelative(item.dueAt);
+}
+
+/** A `/defer` line split into the timing it opens with and the message that follows. */
+export interface DeferCommand {
+  /** Null when the line named no time, which is not an error: the panel asks. */
+  trigger: Trigger | null;
+  text: string;
+}
+
+/** Words that mean the rolling usage window rather than a clock. */
+const RESET_WORDS = new Set(["reset", "session-reset", "sessionreset"]);
+
+/** A second word that can only be the tail of a wait, never the message. */
+const WAIT_TAIL = /^\d+(?:\.\d+)?\s*(?:m|min|mins|minute|minutes|h|hr|hrs|hour|hours)$/i;
+
+const MERIDIEM_WORD = /^(?:am|pm|a\.m\.|p\.m\.)$/i;
+
+/**
+ * Reads `2h ship the release notes` — the timing first, then everything else as
+ * the message.
+ *
+ * Only a leading word that can *only* be a time is taken as one, and never more
+ * of the line than has to be: `1h 30m` takes both words because `30m` cannot
+ * begin a sentence, while `3 more tests` takes only `3` and leaves the rest.
+ * `at 9:30 pm`, `in 45m` and `reset` are spelled out for anyone who would
+ * rather say it in words. A line that opens with no time at all is not an
+ * error — it comes back with a null trigger for the caller to ask about, which
+ * is the one thing that must never be guessed.
+ */
+export function parseDeferCommand(raw: string, options: ClockOptions = {}): DeferCommand {
+  const words = raw.trim().split(/\s+/).filter((word) => word !== "");
+  if (words.length === 0) return { trigger: null, text: "" };
+
+  const rest = (taken: number): string => words.slice(taken).join(" ");
+  const lead = words[0].toLowerCase();
+
+  if (RESET_WORDS.has(lead)) return { trigger: { kind: "sessionReset" }, text: rest(1) };
+  if (lead === "session" && words[1]?.toLowerCase() === "reset") {
+    return { trigger: { kind: "sessionReset" }, text: rest(2) };
+  }
+
+  // "in …" and "at …" say which reading is meant, so they take a second word
+  // that a bare wait would have to earn.
+  if (lead === "in" || lead === "at") {
+    for (const taken of [3, 2]) {
+      const written = words.slice(1, taken).join(" ");
+      if (written === "") continue;
+      const trigger = lead === "in" ? asWait(written) : asClock(written, options);
+      if (trigger !== null) return { trigger, text: rest(taken) };
+    }
+    // Not a time after all: "at some point" is the start of a message.
+  }
+
+  // A bare wait, taking a second word only when it cannot be anything else, and
+  // a bare clock time, with its half of the day if that is a separate word.
+  const wait = () => {
+    if (words[1] !== undefined && WAIT_TAIL.test(words[1])) {
+      const pair = asWait(`${words[0]} ${words[1]}`);
+      if (pair !== null) return { trigger: pair, text: rest(2) };
+    }
+    const single = asWait(words[0]);
+    return single === null ? null : { trigger: single, text: rest(1) };
+  };
+  const clock = () => {
+    if (words[1] !== undefined && MERIDIEM_WORD.test(words[1])) {
+      const pair = asClock(`${words[0]} ${words[1]}`, options);
+      if (pair !== null) return { trigger: pair, text: rest(2) };
+    }
+    const single = asClock(words[0], options);
+    return single === null ? null : { trigger: single, text: rest(1) };
+  };
+  // Written with a colon or a half of the day, it is the time of day: `21:30`
+  // here means tonight, the way it does in the panel's own time field. A wait
+  // of that length is `21h 30m`, or `in 21:30` for anyone who insists.
+  const clockFirst = /[:.]/.test(words[0]) || /(?:am?|pm?)\.?$/i.test(words[0]);
+  const read = clockFirst ? (clock() ?? wait()) : (wait() ?? clock());
+  if (read !== null) return read;
+
+  return { trigger: null, text: words.join(" ") };
+}
+
+function asWait(written: string): Trigger | null {
+  const ms = parseDuration(written);
+  return ms === null ? null : { kind: "after", ms };
+}
+
+function asClock(written: string, options: ClockOptions): Trigger | null {
+  // A bare number is a wait, never a time: "15" typed after /defer is minutes.
+  if (/^\d+$/.test(written.trim())) return null;
+  const iso = parseNextClockTime(written, options);
+  return iso === null ? null : { kind: "at", iso };
 }

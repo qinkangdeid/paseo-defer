@@ -1,11 +1,9 @@
 /**
  * Guards the plugin runtime boundary, which typecheck cannot see.
  *
- * Paseo compiles index.ts twice. For each target it deletes the other
- * runtime's imports and the registration calls that do not apply, but leaves
- * every other statement in place. So a server identifier used anywhere in
- * contribute()'s shared body survives with its import gone and throws a
- * ReferenceError at load, which silently drops every contribution.
+ * Paseo v0.8 compiles independent client and server entries. This catches a
+ * runtime-crossing import and executes the client bundle against a strict host
+ * module map so an unavailable module or invalid registration fails locally.
  *
  * The client bundle is then executed against the same validation the app
  * applies in evaluatePluginClientBundle, so a registration Paseo would reject
@@ -15,15 +13,13 @@ import * as esbuild from "esbuild";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  buildOptions,
-  filterEntrypoint,
-  findDanglingReferences,
-  instantiateBundle,
-} from "./check-lib.mjs";
+import { buildOptions, instantiateBundle } from "./check-lib.mjs";
 
 const DIR = dirname(fileURLToPath(import.meta.url));
-const ENTRY = resolve(DIR, "index.ts");
+const ENTRIES = {
+  client: resolve(DIR, "index.client.tsx"),
+  server: resolve(DIR, "index.server.ts"),
+};
 
 /**
  * Executes the filtered client bundle the way the app does: a strict module
@@ -40,8 +36,17 @@ async function runClientBundle(code) {
     "react/jsx-runtime": {},
     "react-native": {},
     "@tanstack/react-query": {},
-    "@getpaseo/plugin": { ...contracts, Icon: () => null },
-    "@getpaseo/plugin/react-native": { Icon: () => null, Modal: () => null, useToast: () => ({}) },
+    "@getpaseo/plugin": contracts,
+    "@getpaseo/plugin/client": {
+      useRpc: () => async () => ({}),
+      useAgent: () => null,
+      useWorkspace: () => null,
+    },
+    "@getpaseo/plugin/client/react-native": {
+      Icon: () => null,
+      Modal: () => null,
+      useToast: () => ({ show() {}, error() {} }),
+    },
     "@getpaseo/plugin/server": contracts,
   };
   const exported = instantiateBundle(code, (id) => {
@@ -49,7 +54,9 @@ async function runClientBundle(code) {
     return stubs[id];
   });
   const contribute = exported?.default;
-  if (typeof contribute !== "function") throw new Error("index.ts must default-export a function");
+  if (typeof contribute !== "function") {
+    throw new Error("index.client.tsx must default-export a function");
+  }
 
   const summary = [];
   const usedIds = new Map();
@@ -111,9 +118,19 @@ async function runClientBundle(code) {
       requireFn(item?.onSelect, `Command Center item ${id} callback`);
       summary.push(`addCommandCenterItem(${id})`);
     },
-    addClientSide(contribution) {
-      requireFn(contribution, "client-side contribution");
-      summary.push("addClientSide()");
+    addSlashCommand(command) {
+      requireText(command?.name, "slash command name");
+      requireFn(command?.onSubmit, `slash command ${command?.name}`);
+      summary.push(`addSlashCommand(${command.name})`);
+      return () => {};
+    },
+    addComposerPill(pill) {
+      requireText(pill?.id, "composer pill id");
+      if (pill?.button !== undefined) {
+        requireText(pill.button.title, `composer pill ${pill.id} title`);
+        requireText(pill.button.icon, `composer pill ${pill.id} icon`);
+      }
+      return () => {};
     },
     addAttachmentSource(source) {
       summary.push(`addAttachmentSource(${requireId(source?.id, "attachment source id")})`);
@@ -130,8 +147,17 @@ async function runClientBundle(code) {
       summary.push(`addTimelineRenderer(${kind})`);
     },
     handle() {
-      throw new Error("plugin.handle survived into the client bundle");
+      throw new Error("server.handle reached the client bundle");
     },
+    paseo: {
+      agents: {
+        list: async () => ({ entries: [] }),
+        subscribe: () => () => {},
+      },
+    },
+    rpc: async () => ({ items: [], settings: { pillMode: "always" } }),
+    openPanel() {},
+    openSurface() {},
   };
 
   const cleanup = contribute(plugin);
@@ -146,24 +172,14 @@ async function runClientBundle(code) {
 }
 
 async function checkTarget(target) {
-  const source = readFileSync(ENTRY, "utf8");
-  const { filtered, strippedBindings } = filterEntrypoint(source, target);
-  const dangling = findDanglingReferences(filtered, strippedBindings);
-  if (dangling.length > 0) {
-    for (const { name, from } of dangling) {
-      console.error(
-        `  ✗ ${target}: "${name}" is used in contribute() but its import ("${from}") is removed from this bundle`,
-      );
-    }
-    return false;
-  }
-
-  const built = await esbuild.build(buildOptions(ENTRY, DIR, filtered, target));
+  const entry = ENTRIES[target];
+  const source = readFileSync(entry, "utf8");
+  const built = await esbuild.build(buildOptions(entry, DIR, source, target));
 
   if (target === "server") {
     // Executing the server bundle would start the real scheduler, so stop at a
     // clean build plus the reference check above. check-teardown.mjs runs it.
-    console.log(`  ✓ ${target}: builds, no stripped-import references`);
+    console.log(`  ✓ ${target}: builds with a clean runtime boundary`);
     return true;
   }
 

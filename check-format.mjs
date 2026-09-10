@@ -18,7 +18,7 @@ const DIR = dirname(fileURLToPath(import.meta.url));
 const ENTRY = resolve(DIR, ".check-format.entry.ts");
 
 async function loadFormat() {
-  writeFileSync(ENTRY, `export * from "./format.shared";\n`);
+  writeFileSync(ENTRY, `export * from "./shared/format";\n`);
   try {
     const built = await esbuild.build({
       entryPoints: [ENTRY],
@@ -27,14 +27,14 @@ async function loadFormat() {
       format: "cjs",
       platform: "neutral",
       target: "es2020",
-      external: ["zod", "@getpaseo/plugin/server"],
+      external: ["zod", "@getpaseo/plugin"],
       absWorkingDir: DIR,
       logLevel: "silent",
     });
     const zod = await import("zod");
     return instantiateBundle(built.outputFiles[0].text, (id) => {
       if (id === "zod") return zod;
-      if (id === "@getpaseo/plugin/server") return { defineRpc: (d) => d };
+      if (id === "@getpaseo/plugin") return { defineRpc: (d) => d };
       throw new Error(`Module "${id}" is not available here`);
     });
   } finally {
@@ -154,6 +154,40 @@ try {
     "under two days still counts in hours");
   check(f.formatRelative(new Date(from.getTime() + 50 * 3600_000).toISOString(), from.getTime()) === "in 2d 2h",
     "beyond two days counts in days");
+  // --- Reading a `/defer` line: the timing first, the message after ---
+  const line = (raw) => f.parseDeferCommand(raw, { from, hour12: false });
+  const said = (raw) => {
+    const { trigger, text } = line(raw);
+    if (trigger === null) return `— ${text}`;
+    if (trigger.kind === "after") return `${f.formatDuration(trigger.ms)} ${text}`;
+    if (trigger.kind === "sessionReset") return `reset ${text}`;
+    return `${localOf(trigger.iso)} ${text}`;
+  };
+
+  check(said("2h ship the release notes") === "2h ship the release notes", "a wait opens the line");
+  check(said("1h 30m ship it") === "1h 30m ship it", "a two-word wait is taken whole");
+  check(said("in 45m ship it") === "45m ship it", "the wait can be said in words");
+  check(said("15") === "15m ", "a bare number is minutes, message or no message");
+  check(said("at 21:30 ship it") === "2026-09-02 21:30 ship it", "a clock time can be spelled out");
+  check(said("21:30 ship it") === "2026-09-02 21:30 ship it", "or written on its own");
+  check(said("9:30 pm ship it") === "2026-09-02 21:30 ship it", "with its half of the day apart");
+  check(said("reset ship it") === "reset ship it", "the usage window is a word");
+  check(said("session reset ship it") === "reset ship it", "said either way");
+
+  // The line is only read as a time when it can only be a time.
+  check(said("3 more tests please") === "3m more tests please", "a leading number is still a wait");
+  check(said("ship it in 2h") === "— ship it in 2h", "a time later in the line is left alone");
+  check(said("at some point, ship it") === "— at some point, ship it", "\"at\" is not always a time");
+  check(said("in the morning, ship it") === "— in the morning, ship it", "nor is \"in\"");
+  check(said("resetting the box") === "— resetting the box", "nor is a word that merely starts like one");
+  check(said("2 more tests") === "2m more tests", "a wait takes no more of the line than it must");
+  check(said("") === "— ", "an empty line asks for nothing");
+  check(said("   ") === "— ", "and neither does an empty-looking one");
+  check(said("90d ship it") === "— 90d ship it", "a wait beyond the limit is not a wait at all");
+  // A colon is the one form both readings claim; the time of day wins it.
+  check(said("21:30 ship it") === "2026-09-02 21:30 ship it", "a colon reads as the time of day");
+  check(said("in 21:30 ship it") === "21h 30m ship it", "saying \"in\" claims it back as a wait");
+  check(said("1h30 ship it") === "1h 30m ship it", "an unpunctuated wait stays a wait");
 } catch (error) {
   failures.push(error instanceof Error ? (error.stack ?? error.message) : String(error));
 }
