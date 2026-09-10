@@ -20,6 +20,7 @@
 - `client/handoff.ts` carries the text already typed in a session's composer into the Defer box, because Paseo hands a plugin no composer state: `onPress` takes no arguments and neither the pill nor the panel props carry the draft. It reads the app's *own* persisted draft store (`localStorage["paseo-drafts"]`, records keyed `agent:<serverId>:<agentId>`, only a lifecycle `active` record holds live text), so it works on the desktop and web apps and quietly finds nothing anywhere else. Treat every read as best effort — a moved schema must read as "no draft", never as an error — and keep it a *copy*: the app's in-memory draft is the source of truth and does not watch its own storage, which is why the composer says the prompt box still holds the text. Re-check the shape against `packages/app/src/stores/draft-store` when the supported Paseo version moves, and drop the whole file for the host API the moment one exists.
 - `client/refresh.ts` is the in-app notifier between the Defer views and the pill. Paseo has no server-to-client push for plugin state, so a mutation must call `notifyDeferChanged()` or the pill stays stale for a poll interval.
 - Add nothing to `dependencies`. The server bundle must compile with no installed packages or `paseo plugin add` breaks; `server/daemon.ts` borrows Paseo's daemon client from the host through a runtime `require` for exactly that reason. `check-gitinstall.mjs` enforces it.
+- Every daemon connection must use `server/daemon.ts`'s `resolvePassword()`: prefer `PASEO_PASSWORD`, then `PASEO_PASSWORD_FILE`, then `~/paseo-hub/secrets/daemon-password`. Never log, persist, return, or interpolate the resolved password into an error.
 - Preserve the versioned `queue.json` and `settings.json` schemas and the `$PASEO_HOME/plugin-data/defer` data path; add migrations for incompatible changes. Paseo has no plugin-settings API, so preferences are the plugin's own file, carried to clients on `defer.list` because the pill already polls it.
 - Keep daemon connections short-lived and ensure every timer/resource is released by plugin cleanup. Do not log secrets or message bodies.
 - Do not restart the daemon to load changes, and do not enable plugins or edit Paseo daemon config without explicit permission. The web-UI check in `Verify changes` needs no config change: its loopback origin is a permanent allowlist entry.
@@ -35,13 +36,14 @@ npm ci
 npm run verify
 ```
 
-`verify` is typecheck plus nine checks, each guarding something typecheck cannot see. Keep them passing and keep `check-lib.mjs` aligned with the Paseo version in the README badge, since every check models Paseo's compiler from it.
+`verify` is typecheck plus ten checks, each guarding something typecheck cannot see. Keep them passing and keep `check-lib.mjs` aligned with the Paseo version in the README badge, since every check models Paseo's compiler from it.
 
 | Check | Guards |
 | --- | --- |
 | `check-bundles.mjs` | The dual-bundle boundary, and the app's own registration validation. A server identifier in `contribute()`'s shared body silently drops every contribution. |
 | `check-format.mjs` | The timing parsers, against a fixed `from` and an explicit clock convention: a bare wait is minutes, a bare 1–12 on an AM/PM device takes the sooner half of the day, and a shown wait or time can be typed straight back in. It also covers the `/defer` line: only a leading word that can *only* be a time is taken as one, a colon means the time of day, and a line naming no time comes back with none rather than a guess. |
 | `check-engine.mjs` | The scheduler's due-selection, against a stubbed store and daemon. A `sessionReset` item must fire on the rollover and not on a re-read of the same window: the provider re-derives the reset instant on every upstream read, so comparing it exactly sent messages hours early. It also covers first-window adoption and a daemon that cannot answer. |
+| `check-daemon-auth.mjs` | Daemon-password precedence and secrecy: the standard env, an explicit secret file, the paseo-vm convention, and the unauthenticated fallback all reach the borrowed daemon client without leaking the password. |
 | `check-composer.mjs` | The composer's timing controls, mounted against a small hook runtime and pressed: which trigger each option builds, that the AM/PM controls appear only on an AM/PM device, and that editing the text of a typed wait does not re-anchor it. It also covers a handed-over composer draft filling an empty box and never overwriting a message being written. Runs itself once per clock convention under `LC_ALL`. |
 | `check-handoff.mjs` | The composer hand-over: the app's draft-store shape, including the emptied record a send leaves behind, and an offer that survives until the panel mounts, is handed over exactly once, expires, and never reaches another session. |
 | `check-slash.mjs` | The `/defer` command, against a host new enough to offer it — which no other check models, since `check-bundles.mjs` deliberately models one without it. What each line queues, and that a line missing the time or the message opens the panel carrying what *was* written instead of inventing the rest. |
@@ -69,7 +71,8 @@ Reaches the RPCs without any UI, which is the fastest way to prove the borrowed 
 // probe.tmp.mjs — delete when done
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 const c = new DaemonClient({ url: "ws://127.0.0.1:6767/ws", clientId: "defer-probe",
-  clientType: "cli", reconnect: { enabled: false }, connectTimeoutMs: 10000, suppressSendErrors: true });
+  clientType: "cli", reconnect: { enabled: false }, connectTimeoutMs: 10000, suppressSendErrors: true,
+  ...(process.env.PASEO_PASSWORD ? { password: process.env.PASEO_PASSWORD } : {}) });
 await c.connect();
 try {
   const call = (m, i) => c.invokePluginRpc("paseo-defer", m, i);

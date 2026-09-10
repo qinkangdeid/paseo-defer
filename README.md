@@ -33,7 +33,7 @@ When a message becomes due, paseo-defer waits for the target agent to become idl
 Requires Paseo 0.8.0 or newer with plugins enabled — enable them in **Settings → Plugins** first if they are off.
 
 ```bash
-paseo plugin add tomgrin10/paseo-defer --ref v2.0.1
+paseo plugin add tomgrin10/paseo-defer --ref v2.0.2
 ```
 
 That is the whole install. Paseo clones the repository on the daemon machine, compiles it, and starts it: no package manager runs, and the plugin needs no installed dependencies. Omit `--ref` to track `main`.
@@ -73,6 +73,8 @@ $PASEO_HOME/plugin-data/defer/settings.json
 ```
 
 If `PASEO_HOME` is unset, it defaults to `~/.paseo`. Install only after reviewing the source.
+
+For a password-protected daemon, set the standard `PASEO_PASSWORD` environment variable before the daemon starts. The plugin also accepts `PASEO_PASSWORD_FILE` pointing to a file that contains only the plaintext password, and automatically recognizes the paseo-vm secret at `~/paseo-hub/secrets/daemon-password`. `PASEO_PASSWORD` takes precedence, followed by the explicit file and then the VM convention. The password is passed directly to each short-lived daemon connection and is never logged or stored in the plugin data files.
 
 Carrying the prompt box across — into the panel, or onto the card's chips — reads the app's own composer-draft storage in the client, for the one session whose **Defer** you pressed and only at that moment. Nothing about it is written, stored, or sent anywhere: the text goes into the message box in front of you, and reaches the daemon only if you queue it.
 

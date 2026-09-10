@@ -46,6 +46,7 @@ interface DaemonClientModule {
     reconnect: { enabled: boolean };
     connectTimeoutMs: number;
     suppressSendErrors: boolean;
+    password?: string;
   }) => DaemonClient;
 }
 
@@ -80,6 +81,39 @@ function loadDaemonClientModule(): DaemonClientModule {
 
 let cachedUrl: string | null = null;
 
+const VM_PASSWORD_FILE = join(homedir(), "paseo-hub", "secrets", "daemon-password");
+
+async function readPasswordFile(path: string, required: boolean): Promise<string | undefined> {
+  try {
+    const password = (await readFile(path, "utf8")).trim();
+    if (password !== "") return password;
+    if (required) throw new Error("PASEO_PASSWORD_FILE is empty.");
+    return undefined;
+  } catch (error) {
+    if (required) {
+      if (error instanceof Error && error.message === "PASEO_PASSWORD_FILE is empty.") throw error;
+      throw new Error("PASEO_PASSWORD_FILE could not be read.");
+    }
+    return undefined;
+  }
+}
+
+/**
+ * Resolve the daemon's plaintext password without ever reading the bcrypt hash
+ * in config.json or including a secret in logs/errors. The standard Paseo env
+ * wins; an explicit secret file is next; the paseo-vm secret is a final
+ * zero-configuration fallback for plugin subprocesses on hub hosts.
+ */
+export async function resolvePassword(): Promise<string | undefined> {
+  const fromEnv = process.env.PASEO_PASSWORD?.trim();
+  if (fromEnv) return fromEnv;
+
+  const configuredFile = process.env.PASEO_PASSWORD_FILE?.trim();
+  if (configuredFile) return readPasswordFile(configuredFile, true);
+
+  return readPasswordFile(VM_PASSWORD_FILE, false);
+}
+
 async function resolveUrl(): Promise<string> {
   if (cachedUrl !== null) return cachedUrl;
   const fromEnv = process.env.PASEO_DAEMON_URL;
@@ -104,6 +138,7 @@ async function resolveUrl(): Promise<string> {
 /** Runs `work` against a connection that is always closed before returning. */
 export async function withDaemon<T>(work: (client: DaemonClient) => Promise<T>): Promise<T> {
   const { DaemonClient } = loadDaemonClientModule();
+  const password = await resolvePassword();
   const client = new DaemonClient({
     url: await resolveUrl(),
     clientId: "paseo-defer",
@@ -111,6 +146,7 @@ export async function withDaemon<T>(work: (client: DaemonClient) => Promise<T>):
     reconnect: { enabled: false },
     connectTimeoutMs: CONNECT_TIMEOUT_MS,
     suppressSendErrors: true,
+    ...(password === undefined ? {} : { password }),
   });
   try {
     await client.connect();
