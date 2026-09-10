@@ -329,9 +329,6 @@ export function DeferComposer({
   });
 
   const isEditing = editing !== null;
-  // Only while the hand-over is still exactly what was handed over; one edit and
-  // it is the user's own message.
-  const fromComposer = text !== "" && text === handedOver.current;
   const canSubmit =
     text.trim() !== "" && !submit.isPending && (isEditing || agentId !== null);
 
@@ -361,13 +358,6 @@ export function DeferComposer({
         multiline
         accessibilityLabel="Message to defer"
       />
-
-      {fromComposer ? (
-        <Text style={styles.hint}>
-          Taken from this session's prompt box, which still holds it: clear it there unless you mean
-          to send it now as well.
-        </Text>
-      ) : null}
 
       <View style={styles.row}>
         {choices.map((choice) => {

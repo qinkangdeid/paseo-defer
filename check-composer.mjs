@@ -477,7 +477,6 @@ try {
     handed.value("Message to defer") === "look at the failing test",
     "what was typed in the prompt box is in the message box as the panel opens",
   );
-  check(handed.text().includes("still holds it"), "a hand-over says the prompt box still has it");
 
   composerDraft = "a later prompt";
   handed.graph.offerComposerDraft("agent-1");
@@ -487,7 +486,6 @@ try {
   );
 
   handed.type("Message to defer", "my own words");
-  check(!handed.text().includes("still holds it"), "an edited hand-over is the user's own message");
   composerDraft = "yet another prompt";
   handed.graph.offerComposerDraft("agent-1");
   check(
@@ -505,7 +503,6 @@ try {
   handed.press("Defer this message");
   await settle();
   check(handed.value("Message to defer") === "", "queueing a handed-over message clears the box");
-  check(!handed.text().includes("still holds it"), "queueing puts the hand-over notice away");
 
   const unasked = await harness({
     beforeMount: (graph) => graph.offerComposerDraft("agent-1"),
