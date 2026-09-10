@@ -25,6 +25,14 @@ console.log("Checking Git-install compatibility...");
 
 const failures = [];
 
+for (const name of execFileSync("find", ["server", "-type", "f"], { cwd: DIR, encoding: "utf8" })
+  .split("\n")
+  .filter((file) => /\.tsx?$/.test(file))) {
+  if (/["']@getpaseo\/client/.test(readFileSync(join(DIR, name), "utf8"))) {
+    failures.push(`${name}: literal @getpaseo/client type dependencies fail Paseo's Git installer`);
+  }
+}
+
 /** Files a Git clone would carry, so an uncommitted source shows up as a gap. */
 function trackedFiles() {
   try {
