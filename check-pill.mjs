@@ -357,6 +357,17 @@ try {
     typeof registration?.title === "string" && registration.title.trim() !== "",
     "the pill has an accessible label",
   );
+  // The `Component`/`onPress` fields above are the legacy pre-descriptor
+  // contract; the live v0.8 app only ever reads `button`. Pressing the real
+  // pill opens a popover anchored to it, not the panel `onPress` still does.
+  check(
+    registration?.button?.behavior?.kind === "popover",
+    "the composer pill's button descriptor opens a popover, not the panel",
+  );
+  check(
+    typeof registration?.button?.behavior?.Content === "function",
+    "the popover behavior supplies a Content component",
+  );
 
   const draw = () => render(registration.Component, { agentId: "agent-1", workspaceId: "ws-1" });
   check(textOf(draw()).includes("Defer"), "an idle pill reads as a Defer button");

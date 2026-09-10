@@ -13,6 +13,7 @@ import {
 } from "../shared/defer";
 import { pillLabel, queuedLabel, stateLabel } from "../shared/format";
 import { offerComposerDraft, readComposerDraft } from "./handoff";
+import { DeferPopoverContent } from "./popover";
 import { notifyDeferChanged, onDeferChanged } from "./refresh";
 
 /**
@@ -566,16 +567,14 @@ export function contributeClient(client: PluginClientContext): PluginCleanup {
           },
           // The live v0.8 descriptor contract. beta.1 ignores this field and
           // uses the legacy fields above; newer clients ignore those and use
-          // this action descriptor.
+          // this popover descriptor instead of opening the full panel as a tab.
           button: {
             title: "Defer a message to this session",
             icon: "Clock",
             label: labelFor(agentId),
             behavior: {
-              kind: "action" as const,
-              onPress() {
-                openPanelFor(agentId, workspaceId);
-              },
+              kind: "popover" as const,
+              Content: DeferPopoverContent,
             },
           },
         };
