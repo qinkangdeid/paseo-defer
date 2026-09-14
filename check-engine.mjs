@@ -25,6 +25,7 @@ const DIR = dirname(fileURLToPath(import.meta.url));
 const world = {
   items: [],
   resetsAt: null,
+  providerLookups: [],
   usageFails: false,
   updates: [],
   lifecycle: { teardown: null },
@@ -46,6 +47,10 @@ const STUBS = {
     export const fetchSessionResetsAt = async () => {
       if (globalThis.__deferCheck.usageFails) throw new Error("usage unavailable");
       return globalThis.__deferCheck.resetsAt;
+    };
+    export const getProviderByAgentId = async (agentId) => {
+      globalThis.__deferCheck.providerLookups.push(agentId);
+      return "claude";
     };
     export const readAgentStates = async () => new Map();
     export const withDaemon = async (work) => work({});
@@ -182,9 +187,14 @@ try {
   // Now the same thing through selectDue, which is what the tick calls.
   world.resetsAt = READS[2];
   world.updates = [];
+  world.providerLookups = [];
   let due = await selectDue([reset(READS[0], "a"), reset(READS[1], "b"), reset(READS[2], "c")], BEFORE);
   check(due.length === 0, "three messages queued against one window all wait");
   check(world.updates.length === 0, "and none of them is rewritten while it waits");
+  check(
+    world.providerLookups.length === 3 && world.providerLookups.every((agentId) => agentId === "agent"),
+    "each reset reads its item's session provider",
+  );
 
   world.updates = [];
   due = await selectDue([reset(READS[0], "a"), timed("2026-09-02T14:03:00.000Z", "t")], BEFORE);

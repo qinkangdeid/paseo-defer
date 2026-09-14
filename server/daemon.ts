@@ -261,11 +261,19 @@ function normalizeInstant(value: string | null | undefined): string | null {
   return new Date(ms).toISOString();
 }
 
+/** Get the provider name and return it based on provided agent id */
+export async function getProviderByAgentId(agentId: string | undefined): Promise<string | null> {
+  if (agentId === undefined || agentId === "") return null;
+  return (await fetchSessions()).find((s) => s.id === agentId)?.provider ?? null;
+}
+
 /**
  * End of the provider's rolling usage window ("Session" in Paseo's usage UI).
  * Cached, because the daemon fetches it from the provider upstream.
  */
-export async function fetchSessionResetsAt(provider = "claude"): Promise<string | null> {
+export async function fetchSessionResetsAt(provider: string | null | undefined): Promise<string | null> {
+  if (!provider) provider = "claude";
+
   const now = Date.now();
   if (usageCache !== null && now - usageCache.at < USAGE_TTL_MS) return usageCache.resetsAt;
   const resetsAt = await withDaemon(async (client) =>

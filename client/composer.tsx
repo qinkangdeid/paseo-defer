@@ -309,7 +309,7 @@ export function DeferComposer({
       // Leave timing untouched unless the selection points somewhere else, so
       // fixing a typo cannot silently restart a countdown.
       const retiming = !triggersMatch(trigger, editing);
-      const result = await update({ id: editing.id, text: body, ...(retiming ? { trigger } : {}) });
+      const result = await update({ id: editing.id, text: body, agentId, ...(retiming ? { trigger } : {}) });
       if (result.error !== null) throw new Error(result.error);
       return { created: null };
     },

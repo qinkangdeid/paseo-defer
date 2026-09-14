@@ -95,6 +95,7 @@ export const updateDeferred = defineRpc({
   input: z.object({
     id: z.string(),
     text: z.string().min(1).optional(),
+    agentId: z.string().nullable(),
     /** Omit to keep the existing timing; sending one re-anchors relative triggers. */
     trigger: TriggerSchema.optional(),
   }),

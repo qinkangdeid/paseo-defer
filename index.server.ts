@@ -9,7 +9,7 @@ import {
   updateSettings,
   type Deferred,
 } from "./shared/defer";
-import { fetchSessionResetsAt, fetchSessions } from "./server/daemon";
+import { fetchSessionResetsAt, fetchSessions, getProviderByAgentId } from "./server/daemon";
 import { createDeferredRecord, resolveDueAt } from "./server/engine";
 import { settings } from "./server/settings";
 import { store } from "./server/store";
@@ -22,7 +22,8 @@ export default function contribute(server: PluginServerContext) {
     let sessionResetsAt: string | null = null;
     let usageError: string | null = null;
     try {
-      sessionResetsAt = await fetchSessionResetsAt();
+      const provider = await getProviderByAgentId(agentId);
+      sessionResetsAt = await fetchSessionResetsAt(provider);
     } catch (error) {
       usageError = error instanceof Error ? error.message : String(error);
     }
@@ -35,7 +36,8 @@ export default function contribute(server: PluginServerContext) {
 
   server.handle(createDeferred, async ({ agentId, text, trigger }) => {
     const createdAt = new Date().toISOString();
-    const { dueAt, anchorResetsAt } = await resolveDueAt(trigger, createdAt);
+    const provider = await getProviderByAgentId(agentId);
+    const { dueAt, anchorResetsAt } = await resolveDueAt(trigger, createdAt, provider);
     const item = await store.add(
       createDeferredRecord({ agentId, text, trigger, dueAt, anchorResetsAt }),
     );
@@ -43,12 +45,13 @@ export default function contribute(server: PluginServerContext) {
     return { item };
   });
 
-  server.handle(updateDeferred, async ({ id, text, trigger }) => {
+  server.handle(updateDeferred, async ({ id, text, agentId, trigger }) => {
     const patch: Partial<Deferred> = {};
     if (text !== undefined) patch.text = text;
     if (trigger !== undefined) {
       const editedAt = new Date().toISOString();
-      const { dueAt, anchorResetsAt } = await resolveDueAt(trigger, editedAt);
+      const provider = agentId ? await getProviderByAgentId(agentId) : null;
+      const { dueAt, anchorResetsAt } = await resolveDueAt(trigger, editedAt, provider);
       patch.trigger = trigger;
       patch.dueAt = dueAt;
       patch.anchorResetsAt = anchorResetsAt;
