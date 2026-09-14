@@ -280,8 +280,13 @@ function createFakeClient({ items, agents, pillMode }) {
       addComposerPill(contribution) {
         const entry = { contribution, removed: false };
         pills.push(entry);
-        return () => {
-          entry.removed = true;
+        return {
+          update(patch) {
+            contribution.button = { ...contribution.button, ...patch };
+          },
+          remove() {
+            entry.removed = true;
+          },
         };
       },
     },
@@ -479,6 +484,10 @@ try {
   await wait(400);
   check(live(fake).length === 1, "queueing a message does not add a second pill");
   check(textOf(draw()).includes("in "), "a waiting message replaces the button label");
+  check(
+    registration?.button?.title === "Deferred: message one",
+    "the host hover tooltip shows the deferred message",
+  );
 
   // The pill toggles the preview card; the card is what opens the panel.
   registration?.onPress();
@@ -526,6 +535,10 @@ try {
   await wait(400);
   check(live(fake).length === 2, "an emptied queue keeps the pill as a button");
   check(textOf(draw()).includes("Defer"), "an emptied queue restores the button label");
+  check(
+    registration?.button?.title === "Defer a message to this session",
+    "an emptied queue restores the generic hover tooltip",
+  );
   check(cardOf(draw()) === undefined, "an emptied queue leaves no card behind");
 
   // A message for a session Paseo has no snapshot for has nowhere to sit.

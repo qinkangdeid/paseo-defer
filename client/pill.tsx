@@ -68,6 +68,8 @@ const PREVIEW_LIMIT = 3;
 /** What the pill reads as while the session has nothing waiting. */
 const IDLE_LABEL = "Defer";
 
+const IDLE_TITLE = "Defer a message to this session";
+
 /** Waits offered on the card. The panel is one press away for anything else. */
 const QUICK_PRESETS: readonly { id: string; label: string; ms: number }[] = [
   { id: "15m", label: "15m", ms: 15 * 60_000 },
@@ -415,7 +417,7 @@ export function contributeClient(client: PluginClientContext): PluginCleanup {
    */
   type PillRegistration = {
     remove(): void;
-    update?: (patch: { label?: string; visible?: boolean }) => void;
+    update?: (patch: { label?: string; title?: string; visible?: boolean }) => void;
   };
   const registered = new Map<string, { workspaceId: string; pill: PillRegistration }>();
 
@@ -527,11 +529,19 @@ export function contributeClient(client: PluginClientContext): PluginCleanup {
     return items.length === 0 ? IDLE_LABEL : pillLabel(items);
   }
 
+  /** The host renders a pill's title as its hover tooltip. */
+  function titleFor(agentId: string): string {
+    const items = store.items(agentId);
+    if (items.length === 0) return IDLE_TITLE;
+    if (items.length === 1) return `Deferred: ${items[0].text}`;
+    return `Deferred messages:\n${items.map((item) => `• ${item.text}`).join("\n")}`;
+  }
+
   function normalizeRegistration(value: unknown): PillRegistration {
     if (typeof value === "function") return { remove: value as () => void };
     const handle = value as {
       remove(): void;
-      update(patch: { label?: string; visible?: boolean }): void;
+      update(patch: { label?: string; title?: string; visible?: boolean }): void;
     };
     return { remove: () => handle.remove(), update: (patch) => handle.update(patch) };
   }
@@ -541,7 +551,7 @@ export function contributeClient(client: PluginClientContext): PluginCleanup {
     if (stopped) return;
     for (const [agentId, entry] of [...registered]) {
       if (wanted(agentId) && sessions.get(agentId) === entry.workspaceId) {
-        entry.pill.update?.({ label: labelFor(agentId), visible: true });
+        entry.pill.update?.({ label: labelFor(agentId), title: titleFor(agentId), visible: true });
         continue;
       }
       // Gone, or moved to another workspace: the workspace is baked into the
@@ -558,7 +568,7 @@ export function contributeClient(client: PluginClientContext): PluginCleanup {
       if (registered.has(agentId) || !wanted(agentId)) continue;
       const contribution = {
           id: "defer",
-          title: "Defer a message to this session",
+          title: titleFor(agentId),
           workspaceId,
           agentId,
           Component: DeferPill,
@@ -569,7 +579,7 @@ export function contributeClient(client: PluginClientContext): PluginCleanup {
           // uses the legacy fields above; newer clients ignore those and use
           // this popover descriptor instead of opening the full panel as a tab.
           button: {
-            title: "Defer a message to this session",
+            title: titleFor(agentId),
             icon: "Clock",
             label: labelFor(agentId),
             behavior: {
