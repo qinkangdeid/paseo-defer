@@ -284,6 +284,7 @@ async function harness({ editing = null, acceptComposerDraft = false, beforeMoun
     },
     "@getpaseo/plugin": { defineRpc: (d) => d },
     "@getpaseo/plugin/client": { useRpc: rpc.useRpc },
+    "@getpaseo/plugin/client/react-native": { TextInput: "TextInput" },
   };
   const graph = instantiateBundle(CODE, (id) => {
     if (id === "zod") return zod;

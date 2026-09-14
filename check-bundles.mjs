@@ -45,6 +45,7 @@ async function runClientBundle(code) {
     "@getpaseo/plugin/client/react-native": {
       Icon: () => null,
       Modal: () => null,
+      TextInput: () => null,
       useToast: () => ({ show() {}, error() {} }),
     },
     "@getpaseo/plugin/server": contracts,

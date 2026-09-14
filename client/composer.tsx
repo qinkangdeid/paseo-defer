@@ -1,8 +1,9 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { type PluginHostProps, useRpc } from "@getpaseo/plugin/client";
+import { TextInput } from "@getpaseo/plugin/client/react-native";
 import { useMutation } from "@tanstack/react-query";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, Text, TextInput, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import {
   createDeferred,
   updateDeferred,
