@@ -36,7 +36,7 @@ npm ci
 npm run verify
 ```
 
-`verify` is typecheck plus ten checks, each guarding something typecheck cannot see. Keep them passing and keep `check-lib.mjs` aligned with the Paseo version in the README badge, since every check models Paseo's compiler from it.
+`test` runs ten checks, each guarding something typecheck cannot see; `verify` runs typecheck and then `test`. Keep them passing and keep `check-lib.mjs` aligned with the Paseo version in the README badge, since every check models Paseo's compiler from it.
 
 | Check | Guards |
 | --- | --- |
