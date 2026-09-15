@@ -38,13 +38,17 @@ export function DeferOverview({ theme, layout, navigation }: PluginSurfaceProps)
   const clear = useRpc(clearSettled);
   const toast = useToast();
   const queryClient = useQueryClient();
-  const queryKey = ["defer", "all"];
 
   const [targetId, setTargetId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  const queryKey = ["defer", "all", targetId];
 
-  const queue = useQuery({ queryKey, queryFn: () => list({}), refetchInterval: 10_000 });
+  const queue = useQuery({
+    queryKey,
+    queryFn: () => list(targetId === null ? {} : { usageAgentId: targetId }),
+    refetchInterval: 10_000,
+  });
   const sessionList = useQuery({
     queryKey: ["defer", "sessions"],
     queryFn: () => sessions({}),
@@ -193,7 +197,10 @@ export function DeferOverview({ theme, layout, navigation }: PluginSurfaceProps)
           item={item}
           meta={`${stateLabel(item)} · ${labelFor(item.agentId)}`}
           editing={editingId === item.id}
-          onEdit={(target) => setEditingId(target.id)}
+          onEdit={(target) => {
+            setTargetId(target.agentId);
+            setEditingId(target.id);
+          }}
           onCancel={onCancel}
           onOpenSession={openSession}
         />

@@ -63,7 +63,12 @@ export const listSessions = defineRpc({
 
 export const listDeferred = defineRpc({
   name: "defer.list",
-  input: z.object({ agentId: z.string().optional() }),
+  input: z.object({
+    /** Filter queue rows to one session. */
+    agentId: z.string().optional(),
+    /** Session whose provider usage should label the composer, without filtering rows. */
+    usageAgentId: z.string().optional(),
+  }),
   output: z.object({
     items: z.array(DeferredSchema),
     /** Next provider window reset, so the UI can label the sessionReset option. */
@@ -95,7 +100,6 @@ export const updateDeferred = defineRpc({
   input: z.object({
     id: z.string(),
     text: z.string().min(1).optional(),
-    agentId: z.string().nullable(),
     /** Omit to keep the existing timing; sending one re-anchors relative triggers. */
     trigger: TriggerSchema.optional(),
   }),

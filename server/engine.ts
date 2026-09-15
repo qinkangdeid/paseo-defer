@@ -42,6 +42,7 @@ export async function resolveDueAt(
   if (trigger.kind === "at") {
     return { dueAt: new Date(trigger.iso).toISOString(), anchorResetsAt: null };
   }
+  if (provider === null) return { dueAt: null, anchorResetsAt: null };
   const anchor = await fetchSessionResetsAt(provider).catch((error: unknown) => {
     console.error("[defer] could not read usage window at create time", String(error));
     return null;
@@ -102,7 +103,7 @@ export async function selectDue(pending: Deferred[], now: number): Promise<Defer
       // An item already identifies one session, so use that session's provider
       // rather than requiring the scheduler's global tick to choose one.
       const provider = await getProviderByAgentId(item.agentId);
-      currentResetsAt = await fetchSessionResetsAt(provider);
+      currentResetsAt = provider === null ? null : await fetchSessionResetsAt(provider);
     } catch (error) {
       console.error("[defer] could not read usage window; reset trigger waits", String(error));
       continue;
