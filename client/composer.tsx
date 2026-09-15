@@ -19,6 +19,7 @@ import {
   formatClock,
   formatDuration,
   formatRelative,
+  formatResetLabel,
   parseDuration,
   parseNextClockTime,
   triggersMatch,
@@ -373,7 +374,9 @@ export function DeferComposer({
               style={[styles.chip, on ? styles.chipOn : null]}
             >
               <Text style={on ? styles.chipTextOn : styles.chipText}>
-                {choice.id === "reset" && resetsAt !== null ? `Session reset · ${formatClock(resetsAt)}` : choice.label}
+                {choice.id === "reset" && resetsAt !== null
+                  ? `Session reset · ${formatResetLabel(resetsAt)}`
+                  : choice.label}
               </Text>
             </Pressable>
           );
@@ -435,7 +438,7 @@ export function DeferComposer({
         <Text style={styles.hint}>
           {resetsAt === null
             ? usageError ?? "Usage window unavailable; delivery starts once it can be read."
-            : `Next reset ${formatClock(resetsAt)} (${formatRelative(resetsAt)}).`}
+            : `Next reset ${formatResetLabel(resetsAt)} (${formatRelative(resetsAt)}).`}
         </Text>
       ) : null}
 

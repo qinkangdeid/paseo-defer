@@ -14,7 +14,7 @@ import {
 } from "../shared/defer";
 import { DeferComposer, DeferredRow, PillSetting, deferStyles } from "./composer";
 import { notifyDeferChanged } from "./refresh";
-import { formatClock, formatRelative, stateLabel, stateTone } from "../shared/format";
+import { formatRelative, formatResetLabel, stateLabel, stateTone } from "../shared/format";
 
 const FILTER_THRESHOLD = 6;
 /** A busy daemon lists dozens of sessions; the filter reaches past this many. */
@@ -115,7 +115,7 @@ export function DeferOverview({ theme, layout, navigation }: PluginSurfaceProps)
       <Text style={styles.hint}>
         {resetsAt === null
           ? "Usage window unavailable."
-          : `Session resets ${formatClock(resetsAt)} (${formatRelative(resetsAt)}).`}
+          : `Session resets ${formatResetLabel(resetsAt)} (${formatRelative(resetsAt)}).`}
       </Text>
 
       <Text style={styles.section}>{editing === null ? "Defer to a session" : "Edit deferred message"}</Text>

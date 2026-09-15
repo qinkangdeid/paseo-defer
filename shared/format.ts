@@ -67,6 +67,37 @@ export function formatClock(iso: string | null, hour12: boolean = uses12HourCloc
   return `${hours % 12 === 0 ? 12 : hours % 12}:${minutes} ${hours < 12 ? "AM" : "PM"}`;
 }
 
+/**
+ * Compact provider-reset label. A clock is useful while the reset is less than
+ * a day away; beyond that it hides the important part, so name the local
+ * calendar date instead. Include the year only when it differs from today.
+ */
+export function formatResetLabel(
+  iso: string | null,
+  from: number = Date.now(),
+  hour12: boolean = uses12HourClock(),
+): string {
+  if (iso === null) return "—";
+  const target = Date.parse(iso);
+  if (!Number.isFinite(target)) return "—";
+  const delta = target - from;
+  if (delta >= 0 && delta < DAY_MS) return formatClock(iso, hour12);
+
+  const date = new Date(target);
+  const now = new Date(from);
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" as const }),
+    }).format(date);
+  } catch {
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${date.getFullYear()}-${month}-${day}`;
+  }
+}
+
 /** What an empty time field should suggest, in the convention the device uses. */
 export function clockPlaceholder(hour12: boolean = uses12HourClock()): string {
   return hour12 ? "9:30 PM" : "21:30";
