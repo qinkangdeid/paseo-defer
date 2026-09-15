@@ -43,6 +43,7 @@ if (process.env.DEFER_CHECK_LOCALE === undefined) {
 
 const LOCALE = process.env.DEFER_CHECK_LOCALE;
 const EXPECT_HOUR12 = LOCALES[LOCALE];
+const HOST_TEXT_INPUT = "HostTextInput";
 
 /**
  * Just enough of React to mount one component and keep pressing things: hook
@@ -272,7 +273,7 @@ async function harness({ editing = null, acceptComposerDraft = false, beforeMoun
       jsx: (type, jsxProps) => ({ type, props: jsxProps }),
       jsxs: (type, jsxProps) => ({ type, props: jsxProps }),
     },
-    "react-native": { View: "View", Text: "Text", Pressable: "Pressable", TextInput: "TextInput" },
+    "react-native": { View: "View", Text: "Text", Pressable: "Pressable", TextInput: "NativeTextInput" },
     "@tanstack/react-query": {
       useMutation: ({ mutationFn, onSuccess, onError }) => ({
         isPending: false,
@@ -284,6 +285,7 @@ async function harness({ editing = null, acceptComposerDraft = false, beforeMoun
     },
     "@getpaseo/plugin": { defineRpc: (d) => d },
     "@getpaseo/plugin/client": { useRpc: rpc.useRpc },
+    "@getpaseo/plugin/client/react-native": { TextInput: HOST_TEXT_INPUT },
   };
   const graph = instantiateBundle(CODE, (id) => {
     if (id === "zod") return zod;
@@ -337,6 +339,10 @@ try {
   const ui = await harness();
   const hour12 = ui.graph.uses12HourClock();
   check(hour12 === EXPECT_HOUR12, `the ${LOCALE} locale is read as ${EXPECT_HOUR12 ? "12" : "24"}-hour`);
+  check(
+    ui.find("Message to defer")?.type === HOST_TEXT_INPUT,
+    "the message field uses the host input so mobile keyboard positioning follows focus",
+  );
 
   // Every timing route is offered up front, including the typed ones.
   for (const label of ["Deliver 15m", "Deliver 1h", "Deliver 3h", "Deliver In…", "Deliver At…", "Deliver Session reset"]) {
@@ -349,6 +355,7 @@ try {
   // --- A typed wait: the case no preset chip can cover ---
   ui.press("Deliver In…");
   check(ui.find("How long to wait") !== undefined, "choosing In… reveals the wait field");
+  check(ui.find("How long to wait")?.type === HOST_TEXT_INPUT, "the wait field uses the host input");
   check(ui.selected("Deliver In…"), "choosing In… selects it");
   check(ui.text().includes("Minutes unless you say otherwise"), "an empty wait explains what it accepts");
 
@@ -378,6 +385,7 @@ try {
   ui.press("Deliver At…");
   const field = ui.find("Delivery time");
   check(field !== undefined, "choosing At… reveals the time field");
+  check(field?.type === HOST_TEXT_INPUT, "the time field uses the host input");
   check(field?.props.placeholder === ui.graph.clockPlaceholder(hour12), "the time field is prompted in the device's own convention");
   check(ui.text().includes("Local time, 24-hour or with am/pm"), "the time field says which conventions it takes");
   check(
