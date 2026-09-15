@@ -38,6 +38,9 @@ export default function contribute(server: PluginServerContext) {
   server.handle(createDeferred, async ({ agentId, text, trigger }) => {
     const createdAt = new Date().toISOString();
     const provider = trigger.kind === "sessionReset" ? await getProviderByAgentId(agentId) : null;
+    if (trigger.kind === "sessionReset" && provider === null) {
+      throw new Error("The target session is gone.");
+    }
     const { dueAt, anchorResetsAt } = await resolveDueAt(trigger, createdAt, provider);
     const item = await store.add(
       createDeferredRecord({ agentId, text, trigger, dueAt, anchorResetsAt }),
@@ -61,6 +64,9 @@ export default function contribute(server: PluginServerContext) {
           return { item: null, error: "That message is already on its way; it can no longer be edited." };
         }
         provider = await getProviderByAgentId(existing.agentId);
+        if (provider === null) {
+          return { item: null, error: "The target session is gone; its timing was not changed." };
+        }
       }
       const { dueAt, anchorResetsAt } = await resolveDueAt(trigger, editedAt, provider);
       patch.trigger = trigger;

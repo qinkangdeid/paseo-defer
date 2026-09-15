@@ -301,6 +301,24 @@ try {
   world.providers = new Map([["agent", "provider-a"]]);
   world.resetsByProvider = new Map();
 
+  // A successful session read that no longer contains the target is terminal,
+  // including for old unanchored rows that could otherwise wait forever.
+  world.providers = new Map();
+  world.updates = [];
+  due = await selectDue(
+    [{ ...reset(null, "orphan", "gone-agent"), anchorResetsAt: null, dueAt: null }],
+    BEFORE,
+  );
+  check(due.length === 0, "an orphaned reset is not selected for delivery");
+  check(
+    world.updates.length === 1 &&
+      world.updates[0].id === "orphan" &&
+      world.updates[0].patch.state === "failed" &&
+      world.updates[0].patch.error === "The target session is gone.",
+    "an orphaned reset is settled as failed instead of waiting forever",
+  );
+  world.providers = new Map([["agent", "provider-a"]]);
+
   world.updates = [];
   due = await selectDue([reset(READS[0], "a"), timed("2026-09-02T14:03:00.000Z", "t")], BEFORE);
   check(due.length === 1 && due[0].id === "t", "a timed message due now is still delivered alongside");
@@ -382,6 +400,34 @@ try {
   check(
     world.providerLookups.join(",") === "agent-b" && world.resolvedProviders.join(",") === "provider-b",
     "editing resolves the provider from the stored target rather than client state",
+  );
+
+  world.providers = new Map();
+  world.providerLookups = [];
+  world.resolvedProviders = [];
+  const refusedEdit = await update({
+    id: "stored",
+    text: "edited again",
+    trigger: { kind: "sessionReset" },
+  });
+  check(
+    refusedEdit.error === "The target session is gone; its timing was not changed." &&
+      world.resolvedProviders.length === 0,
+    "re-anchoring a missing session is refused without clearing its existing timing",
+  );
+
+  const create = handlers.get("defer.create");
+  let createError = null;
+  await create({
+    agentId: "gone-agent",
+    text: "never queued",
+    trigger: { kind: "sessionReset" },
+  }).catch((error) => {
+    createError = String(error);
+  });
+  check(
+    createError === "Error: The target session is gone." && world.resolvedProviders.length === 0,
+    "creating an unanchored reset for a missing session is refused",
   );
 
   await world.lifecycle.teardown?.();

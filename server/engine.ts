@@ -103,7 +103,16 @@ export async function selectDue(pending: Deferred[], now: number): Promise<Defer
       // An item already identifies one session, so use that session's provider
       // rather than requiring the scheduler's global tick to choose one.
       const provider = await getProviderByAgentId(item.agentId);
-      currentResetsAt = provider === null ? null : await fetchSessionResetsAt(provider);
+      if (provider === null) {
+        await store.update(item.id, {
+          state: "failed",
+          error: "The target session is gone.",
+          settledAt: new Date().toISOString(),
+        });
+        console.log(`[defer] ${item.id} failed: target session ${item.agentId} is gone`);
+        continue;
+      }
+      currentResetsAt = await fetchSessionResetsAt(provider);
     } catch (error) {
       console.error("[defer] could not read usage window; reset trigger waits", String(error));
       continue;
