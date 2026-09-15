@@ -18,7 +18,6 @@ import { instantiateBundle } from "./check-lib.mjs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as crypto from "node:crypto";
-import * as zod from "zod";
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -105,73 +104,62 @@ async function loadEngine() {
   });
 }
 
-async function loadServerContribution() {
+async function loadQueueOperations() {
   const stubs = {
-    "./server/daemon": `
-      export const fetchSessionResetsAt = async () => null;
-      export const fetchSessions = async () => [];
+    "./daemon": `
       export const getProviderByAgentId = async (agentId) => {
         globalThis.__deferCheck.providerLookups.push(agentId);
         return globalThis.__deferCheck.providers.get(agentId) ?? null;
       };
     `,
-    "./server/engine": `
-      export const createDeferredRecord = (input) => input;
+    "./engine": `
+      export const createDeferredRecord = (input) => ({ id: "created", ...input });
       export const resolveDueAt = async (_trigger, _createdAt, provider) => {
         globalThis.__deferCheck.resolvedProviders.push(provider);
         return { dueAt: "2026-09-02T20:50:00.000Z", anchorResetsAt: "2026-09-02T20:50:00.000Z" };
       };
     `,
-    "./server/settings": `
-      export const settings = {
-        read: async () => ({ pillMode: "always" }),
-        write: async () => ({ pillMode: "always" }),
-      };
-    `,
-    "./server/store": `
+    "./store": `
       export const store = {
         list: async () => globalThis.__deferCheck.serverItems,
-        add: async (item) => item,
-        update: async () => null,
+        add: async (item) => {
+          globalThis.__deferCheck.serverItems.push(item);
+          return item;
+        },
         updatePending: async (id, patch) => {
           const item = globalThis.__deferCheck.serverItems.find((candidate) => candidate.id === id);
           return item === undefined
             ? { item: null, reason: "missing" }
             : { item: { ...item, ...patch }, reason: null };
         },
-        removeSettled: async () => 0,
       };
     `,
-    "./shared/lifecycle": `export const lifecycle = { teardown: null };`,
   };
   const plugin = {
-    name: "defer-server-stubs",
+    name: "defer-queue-stubs",
     setup(build) {
-      build.onResolve({ filter: /^\.\/(server\/(daemon|engine|settings|store)|shared\/lifecycle)$/ }, (args) => ({
+      build.onResolve({ filter: /^\.\/(daemon|engine|store)$/ }, (args) => ({
         path: args.path,
-        namespace: "defer-server-stub",
+        namespace: "defer-queue-stub",
       }));
-      build.onLoad({ filter: /.*/, namespace: "defer-server-stub" }, (args) => ({
+      build.onLoad({ filter: /.*/, namespace: "defer-queue-stub" }, (args) => ({
         contents: stubs[args.path],
         loader: "js",
       }));
     },
   };
   const built = await esbuild.build({
-    entryPoints: [resolve(DIR, "index.server.ts")],
+    entryPoints: [resolve(DIR, "server/queue.ts")],
     bundle: true,
     write: false,
     format: "cjs",
     platform: "neutral",
     target: "es2020",
-    external: ["zod", "@getpaseo/plugin"],
     plugins: [plugin],
     absWorkingDir: DIR,
     logLevel: "silent",
   });
   return instantiateBundle(built.outputFiles[0].text, (id) => {
-    if (id === "zod") return zod;
-    if (id === "@getpaseo/plugin") return { defineRpc: (definition) => definition };
     throw new Error(`Module "${id}" is not available here`);
   });
 }
@@ -401,11 +389,9 @@ try {
   );
   check(world.usageLookups.length === 0, "an unknown provider performs no usage lookup");
 
-  // The update RPC must resolve a reset from the queued row, never a client
-  // supplied or currently selected session.
-  const serverGraph = await loadServerContribution();
-  const handlers = new Map();
-  serverGraph.default({ handle: (contract, handler) => handlers.set(contract.name, handler) });
+  // Queue mutations must resolve a reset from the queued row, never client or
+  // currently selected session state.
+  const queue = await loadQueueOperations();
   world.serverItems = [reset(READS[0], "stored", "agent-b")];
   world.providers = new Map([
     ["agent-a", "provider-a"],
@@ -413,8 +399,7 @@ try {
   ]);
   world.providerLookups = [];
   world.resolvedProviders = [];
-  const update = handlers.get("defer.update");
-  await update({
+  await queue.updateDeferredItem({
     id: "stored",
     text: "edited",
     trigger: { kind: "sessionReset" },
@@ -428,7 +413,7 @@ try {
   world.providers = new Map();
   world.providerLookups = [];
   world.resolvedProviders = [];
-  const refusedEdit = await update({
+  const refusedEdit = await queue.updateDeferredItem({
     id: "stored",
     text: "edited again",
     trigger: { kind: "sessionReset" },
@@ -439,9 +424,8 @@ try {
     "re-anchoring a missing session is refused without clearing its existing timing",
   );
 
-  const create = handlers.get("defer.create");
   let createError = null;
-  await create({
+  await queue.createDeferredItem({
     agentId: "gone-agent",
     text: "never queued",
     trigger: { kind: "sessionReset" },
