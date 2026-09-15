@@ -69,6 +69,20 @@ try {
   check(f.formatClock(new Date(2026, 8, 2, 0, 5).toISOString(), true) === "12:05 AM", "midnight is 12 AM");
   check(f.formatClock(new Date(2026, 8, 2, 12, 5).toISOString(), true) === "12:05 PM", "noon is 12 PM");
   check(f.formatClock(null, true) === "—", "an unknown time has a placeholder");
+  const withinDay = new Date(from.getTime() + 23 * 3600_000).toISOString();
+  const afterDay = new Date(from.getTime() + 25 * 3600_000).toISOString();
+  const expectedDate = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(
+    new Date(afterDay),
+  );
+  check(
+    f.formatResetLabel(withinDay, from.getTime(), false) === f.formatClock(withinDay, false),
+    "a reset inside the next 24 hours shows its clock time",
+  );
+  check(
+    f.formatResetLabel(afterDay, from.getTime(), false) === expectedDate,
+    "a reset more than 24 hours away shows its calendar date",
+  );
+  check(f.formatResetLabel(null, from.getTime(), false) === "—", "an unknown reset has a placeholder");
   check(f.clockPlaceholder(true) === "9:30 PM", "an AM/PM device is prompted with AM/PM");
   check(f.clockPlaceholder(false) === "21:30", "a 24-hour device is prompted with 24-hour time");
   // Whatever the convention, a shown time must be typeable straight back in.

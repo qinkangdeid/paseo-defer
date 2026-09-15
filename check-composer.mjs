@@ -167,7 +167,7 @@ const THEME = {
 
 const ENTRY = resolve(DIR, `.check-composer.${LOCALE}.entry.ts`);
 const ENTRY_SOURCE = `export { DeferComposer, deferStyles } from "./client/composer";
-export { clockPlaceholder, formatDuration, uses12HourClock } from "./shared/format";
+export { clockPlaceholder, formatClock, formatDuration, formatResetLabel, uses12HourClock } from "./shared/format";
 export { offerComposerDraft } from "./client/handoff";
 `;
 
@@ -258,7 +258,7 @@ Object.defineProperty(globalThis, "localStorage", {
   },
 });
 
-async function harness({ editing = null, acceptComposerDraft = false, beforeMount } = {}) {
+async function harness({ editing = null, acceptComposerDraft = false, beforeMount, resetsAt = null } = {}) {
   const rpc = createRpcLog();
   const created = [];
   const saved = [];
@@ -297,7 +297,7 @@ async function harness({ editing = null, acceptComposerDraft = false, beforeMoun
     theme: THEME,
     styles: graph.deferStyles(THEME, { compact: false, platform: "web" }),
     agentId: "agent-1",
-    resetsAt: null,
+    resetsAt,
     usageError: null,
     editing: editingItem,
     onEditingChange: (item) => {
@@ -351,6 +351,20 @@ try {
   check(ui.selected("Deliver 15m"), "a preset is chosen to begin with");
   check(ui.find("How long to wait") === undefined, "the wait field stays out of the way until asked for");
   check(ui.find("Delivery time") === undefined, "the time field stays out of the way until asked for");
+
+  // A multi-day provider window needs the date in the compact reset chip. A
+  // clock alone looks like the reset is later today, which is especially
+  // misleading for Codex windows that can span several days.
+  const farReset = new Date(Date.now() + 4 * 24 * 3600_000).toISOString();
+  const resetUi = await harness({ resetsAt: farReset });
+  const resetDate = resetUi.graph.formatResetLabel(farReset);
+  check(resetUi.text().includes(`Session reset · ${resetDate}`), "a multi-day reset chip names its date");
+  check(
+    !resetUi.text().includes(`Session reset · ${resetUi.graph.formatClock(farReset)}`),
+    "a multi-day reset chip does not show only a clock time",
+  );
+  resetUi.press("Deliver Session reset");
+  check(resetUi.text().includes(`Next reset ${resetDate}`), "the selected reset hint names the same date");
 
   // --- A typed wait: the case no preset chip can cover ---
   ui.press("Deliver In…");
