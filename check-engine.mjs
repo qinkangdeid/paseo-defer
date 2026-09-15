@@ -25,8 +25,14 @@ const DIR = dirname(fileURLToPath(import.meta.url));
 const world = {
   items: [],
   resetsAt: null,
+  resetsByProvider: new Map(),
+  providers: new Map([["agent", "provider-a"]]),
+  providerLookups: [],
+  usageLookups: [],
   usageFails: false,
   updates: [],
+  pendingUpdates: [],
+  pendingUpdateReason: null,
   lifecycle: { teardown: null },
 };
 globalThis.__deferCheck = world;
@@ -39,13 +45,22 @@ const STUBS = {
         globalThis.__deferCheck.updates.push({ id, patch });
         return null;
       },
+      updatePending: async (id, patch) => {
+        globalThis.__deferCheck.pendingUpdates.push({ id, patch });
+        return { item: null, reason: globalThis.__deferCheck.pendingUpdateReason };
+      },
       recoverInterrupted: async () => 0,
     };
   `,
   "./daemon": `
-    export const fetchSessionResetsAt = async () => {
+    export const fetchSessionResetsAt = async (provider) => {
       if (globalThis.__deferCheck.usageFails) throw new Error("usage unavailable");
-      return globalThis.__deferCheck.resetsAt;
+      globalThis.__deferCheck.usageLookups.push(provider);
+      return globalThis.__deferCheck.resetsByProvider.get(provider) ?? globalThis.__deferCheck.resetsAt;
+    };
+    export const getProviderByAgentId = async (agentId) => {
+      globalThis.__deferCheck.providerLookups.push(agentId);
+      return globalThis.__deferCheck.providers.get(agentId) ?? null;
     };
     export const readAgentStates = async () => new Map();
     export const withDaemon = async (work) => work({});
@@ -89,6 +104,66 @@ async function loadEngine() {
   });
 }
 
+async function loadQueueOperations() {
+  const stubs = {
+    "./daemon": `
+      export const getProviderByAgentId = async (agentId) => {
+        globalThis.__deferCheck.providerLookups.push(agentId);
+        return globalThis.__deferCheck.providers.get(agentId) ?? null;
+      };
+    `,
+    "./engine": `
+      export const createDeferredRecord = (input) => ({ id: "created", ...input });
+      export const resolveDueAt = async (_trigger, _createdAt, provider) => {
+        globalThis.__deferCheck.resolvedProviders.push(provider);
+        return { dueAt: "2026-09-02T20:50:00.000Z", anchorResetsAt: "2026-09-02T20:50:00.000Z" };
+      };
+    `,
+    "./store": `
+      export const store = {
+        list: async () => globalThis.__deferCheck.serverItems,
+        add: async (item) => {
+          globalThis.__deferCheck.serverItems.push(item);
+          return item;
+        },
+        updatePending: async (id, patch) => {
+          const item = globalThis.__deferCheck.serverItems.find((candidate) => candidate.id === id);
+          return item === undefined
+            ? { item: null, reason: "missing" }
+            : { item: { ...item, ...patch }, reason: null };
+        },
+      };
+    `,
+  };
+  const plugin = {
+    name: "defer-queue-stubs",
+    setup(build) {
+      build.onResolve({ filter: /^\.\/(daemon|engine|store)$/ }, (args) => ({
+        path: args.path,
+        namespace: "defer-queue-stub",
+      }));
+      build.onLoad({ filter: /.*/, namespace: "defer-queue-stub" }, (args) => ({
+        contents: stubs[args.path],
+        loader: "js",
+      }));
+    },
+  };
+  const built = await esbuild.build({
+    entryPoints: [resolve(DIR, "server/queue.ts")],
+    bundle: true,
+    write: false,
+    format: "cjs",
+    platform: "neutral",
+    target: "es2020",
+    plugins: [plugin],
+    absWorkingDir: DIR,
+    logLevel: "silent",
+  });
+  return instantiateBundle(built.outputFiles[0].text, (id) => {
+    throw new Error(`Module "${id}" is not available here`);
+  });
+}
+
 const failures = [];
 function check(condition, description) {
   if (condition) return;
@@ -96,10 +171,10 @@ function check(condition, description) {
 }
 
 /** A queued `sessionReset` message anchored to `anchor`. */
-function reset(anchor, id = "r1") {
+function reset(anchor, id = "r1", agentId = "agent") {
   return {
     id,
-    agentId: "agent",
+    agentId,
     text: "x",
     trigger: { kind: "sessionReset" },
     dueAt: anchor,
@@ -181,10 +256,79 @@ try {
 
   // Now the same thing through selectDue, which is what the tick calls.
   world.resetsAt = READS[2];
+  world.resetsByProvider = new Map();
   world.updates = [];
+  world.providerLookups = [];
+  world.usageLookups = [];
   let due = await selectDue([reset(READS[0], "a"), reset(READS[1], "b"), reset(READS[2], "c")], BEFORE);
   check(due.length === 0, "three messages queued against one window all wait");
   check(world.updates.length === 0, "and none of them is rewritten while it waits");
+  check(
+    world.providerLookups.length === 3 && world.providerLookups.every((agentId) => agentId === "agent"),
+    "each reset reads its item's session provider",
+  );
+  check(
+    world.usageLookups.length === 3 && world.usageLookups.every((provider) => provider === "provider-a"),
+    "each reset reads the provider returned for its session",
+  );
+
+  // Two providers in one tick must each be compared with their own window.
+  world.providers = new Map([
+    ["agent-a", "provider-a"],
+    ["agent-b", "provider-b"],
+  ]);
+  world.resetsByProvider = new Map([
+    ["provider-a", READS[2]],
+    ["provider-b", "2026-09-02T20:50:00.000Z"],
+  ]);
+  world.providerLookups = [];
+  world.usageLookups = [];
+  due = await selectDue(
+    [reset(READS[0], "a", "agent-a"), reset(READS[0], "b", "agent-b")],
+    BEFORE,
+  );
+  check(due.length === 1 && due[0].id === "b", "each provider's reset is evaluated independently");
+  check(
+    world.usageLookups.join(",") === "provider-a,provider-b",
+    "a mixed-provider tick reads both provider windows",
+  );
+  world.providers = new Map([["agent", "provider-a"]]);
+  world.resetsByProvider = new Map();
+
+  // A successful session read that no longer contains the target is terminal,
+  // including for old unanchored rows that could otherwise wait forever.
+  world.providers = new Map();
+  world.updates = [];
+  world.pendingUpdates = [];
+  world.pendingUpdateReason = null;
+  due = await selectDue(
+    [{ ...reset(null, "orphan", "gone-agent"), anchorResetsAt: null, dueAt: null }],
+    BEFORE,
+  );
+  check(due.length === 0, "an orphaned reset is not selected for delivery");
+  check(
+    world.pendingUpdates.length === 1 &&
+      world.pendingUpdates[0].id === "orphan" &&
+      world.pendingUpdates[0].patch.state === "failed" &&
+      world.pendingUpdates[0].patch.error === "The target session is gone.",
+    "an orphaned reset is settled as failed instead of waiting forever",
+  );
+
+  // The snapshot may be stale by the time the session lookup completes. The
+  // pending-only transition must leave a cancellation that won that race alone.
+  world.pendingUpdates = [];
+  world.pendingUpdateReason = "settled";
+  due = await selectDue(
+    [{ ...reset(null, "cancelled-race", "gone-agent"), anchorResetsAt: null, dueAt: null }],
+    BEFORE,
+  );
+  check(due.length === 0, "an orphan cancelled during selection is not delivered");
+  check(
+    world.pendingUpdates.length === 1 && world.updates.length === 0,
+    "orphan settlement uses the pending-state guard and cannot overwrite cancellation",
+  );
+  world.pendingUpdateReason = null;
+  world.providers = new Map([["agent", "provider-a"]]);
 
   world.updates = [];
   due = await selectDue([reset(READS[0], "a"), timed("2026-09-02T14:03:00.000Z", "t")], BEFORE);
@@ -222,13 +366,76 @@ try {
   world.usageFails = false;
 
   // Timed triggers are resolved up front and carry no anchor.
-  const after = await resolveDueAt({ kind: "after", ms: 180_000 }, "2026-09-02T14:00:00.000Z");
+  const after = await resolveDueAt({ kind: "after", ms: 180_000 }, "2026-09-02T14:00:00.000Z", null);
   check(after.dueAt === "2026-09-02T14:03:00.000Z" && after.anchorResetsAt === null,
     "an `after` trigger resolves to createdAt plus the wait");
   world.resetsAt = READS[2];
-  const onReset = await resolveDueAt({ kind: "sessionReset" }, "2026-09-02T14:00:00.000Z");
+  const onReset = await resolveDueAt(
+    { kind: "sessionReset" },
+    "2026-09-02T14:00:00.000Z",
+    "provider-a",
+  );
   check(onReset.dueAt === READS[2] && onReset.anchorResetsAt === READS[2],
     "a `sessionReset` trigger records the window it was queued against");
+  world.usageLookups = [];
+  const unknownProvider = await resolveDueAt(
+    { kind: "sessionReset" },
+    "2026-09-02T14:00:00.000Z",
+    null,
+  );
+  check(
+    unknownProvider.dueAt === null && unknownProvider.anchorResetsAt === null,
+    "an unknown provider stays unanchored rather than borrowing another provider's window",
+  );
+  check(world.usageLookups.length === 0, "an unknown provider performs no usage lookup");
+
+  // Queue mutations must resolve a reset from the queued row, never client or
+  // currently selected session state.
+  const queue = await loadQueueOperations();
+  world.serverItems = [reset(READS[0], "stored", "agent-b")];
+  world.providers = new Map([
+    ["agent-a", "provider-a"],
+    ["agent-b", "provider-b"],
+  ]);
+  world.providerLookups = [];
+  world.resolvedProviders = [];
+  await queue.updateDeferredItem({
+    id: "stored",
+    text: "edited",
+    trigger: { kind: "sessionReset" },
+    agentId: "agent-a",
+  });
+  check(
+    world.providerLookups.join(",") === "agent-b" && world.resolvedProviders.join(",") === "provider-b",
+    "editing resolves the provider from the stored target rather than client state",
+  );
+
+  world.providers = new Map();
+  world.providerLookups = [];
+  world.resolvedProviders = [];
+  const refusedEdit = await queue.updateDeferredItem({
+    id: "stored",
+    text: "edited again",
+    trigger: { kind: "sessionReset" },
+  });
+  check(
+    refusedEdit.error === "The target session is gone; its timing was not changed." &&
+      world.resolvedProviders.length === 0,
+    "re-anchoring a missing session is refused without clearing its existing timing",
+  );
+
+  let createError = null;
+  await queue.createDeferredItem({
+    agentId: "gone-agent",
+    text: "never queued",
+    trigger: { kind: "sessionReset" },
+  }).catch((error) => {
+    createError = String(error);
+  });
+  check(
+    createError === "Error: The target session is gone." && world.resolvedProviders.length === 0,
+    "creating an unanchored reset for a missing session is refused",
+  );
 
   await world.lifecycle.teardown?.();
 } catch (error) {
@@ -242,4 +449,5 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log("  ✓ sessionReset fires on the rollover, not on a re-read of the same window");
+console.log("  ✓ provider-specific resets, edits and missing-provider behavior are isolated");
 console.log("  ✓ timed triggers, first-window adoption and an unreadable daemon all behave");

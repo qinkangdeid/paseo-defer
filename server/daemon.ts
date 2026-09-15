@@ -230,14 +230,15 @@ export async function fetchSessions(): Promise<SessionRow[]> {
 }
 
 const USAGE_TTL_MS = 60_000;
-let usageCache: { at: number; resetsAt: string | null } | null = null;
+const usageCache = new Map<string, { at: number; resetsAt: string | null }>();
 
 function selectWindowReset(
   payload: Awaited<ReturnType<DaemonClient["listProviderUsage"]>>,
   provider: string,
 ): string | null {
   const entry = payload.providers?.find((candidate) => candidate.providerId === provider);
-  // `five_hour` is Claude's rolling window; other providers name theirs `session`.
+  // Provider integrations currently expose their rolling window as either
+  // `five_hour` or `session`.
   const window =
     entry?.windows?.find((candidate) => candidate.id === "five_hour") ??
     entry?.windows?.find((candidate) => candidate.id === "session");
@@ -261,31 +262,38 @@ function normalizeInstant(value: string | null | undefined): string | null {
   return new Date(ms).toISOString();
 }
 
+/** Get the provider name and return it based on provided agent id */
+export async function getProviderByAgentId(agentId: string | undefined): Promise<string | null> {
+  if (agentId === undefined || agentId === "") return null;
+  return (await fetchSessions()).find((s) => s.id === agentId)?.provider ?? null;
+}
+
 /**
  * End of the provider's rolling usage window ("Session" in Paseo's usage UI).
  * Cached, because the daemon fetches it from the provider upstream.
  */
-export async function fetchSessionResetsAt(provider = "claude"): Promise<string | null> {
+export async function fetchSessionResetsAt(provider: string): Promise<string | null> {
   const now = Date.now();
-  if (usageCache !== null && now - usageCache.at < USAGE_TTL_MS) return usageCache.resetsAt;
+  const cached = usageCache.get(provider);
+  if (cached !== undefined && now - cached.at < USAGE_TTL_MS) return cached.resetsAt;
   const resetsAt = await withDaemon(async (client) =>
     selectWindowReset(await client.listProviderUsage(), provider),
   );
-  usageCache = { at: Date.now(), resetsAt };
+  usageCache.set(provider, { at: Date.now(), resetsAt });
   return resetsAt;
 }
 
 /** Same value, reusing a connection the caller already opened. */
 export async function readSessionResetsAt(
   client: DaemonClient,
-  provider = "claude",
+  provider: string,
 ): Promise<string | null> {
   const resetsAt = selectWindowReset(await client.listProviderUsage(), provider);
-  usageCache = { at: Date.now(), resetsAt };
+  usageCache.set(provider, { at: Date.now(), resetsAt });
   return resetsAt;
 }
 
 export function clearCaches(): void {
-  usageCache = null;
+  usageCache.clear();
   sessionsCache = null;
 }

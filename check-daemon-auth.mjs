@@ -26,12 +26,28 @@ function check(condition, description) {
 function load(files = new Map()) {
   const options = [];
   const reads = [];
+  const usageReads = [];
   class DaemonClient {
     constructor(input) {
       options.push(input);
     }
     async connect() {}
     async close() {}
+    async listProviderUsage() {
+      usageReads.push(true);
+      return {
+        providers: [
+          {
+            providerId: "provider-a",
+            windows: [{ id: "session", resetsAt: "2026-09-02T15:00:00Z" }],
+          },
+          {
+            providerId: "provider-b",
+            windows: [{ id: "session", resetsAt: "2026-09-02T20:00:00Z" }],
+          },
+        ],
+      };
+    }
   }
   const graph = instantiateBundle(CODE, (id) => {
     if (id === "node:path") return path;
@@ -48,7 +64,7 @@ function load(files = new Map()) {
     if (id === "@getpaseo/client/internal/daemon-client") return { DaemonClient };
     throw new Error(`Unexpected module ${id}`);
   });
-  return { graph, options, reads };
+  return { graph, options, reads, usageReads };
 }
 
 const previous = {
@@ -83,6 +99,14 @@ try {
   runtime = load();
   check(!("password" in (await connect(runtime))), "password is omitted when no source exists");
 
+  const firstProvider = await runtime.graph.fetchSessionResetsAt("provider-a");
+  const secondProvider = await runtime.graph.fetchSessionResetsAt("provider-b");
+  const firstProviderAgain = await runtime.graph.fetchSessionResetsAt("provider-a");
+  check(firstProvider === "2026-09-02T15:00:00.000Z", "the first provider's reset is selected");
+  check(secondProvider === "2026-09-02T20:00:00.000Z", "a second provider does not reuse the first provider's cache");
+  check(firstProviderAgain === firstProvider, "a provider reuses its own cached reset");
+  check(runtime.usageReads.length === 2, "usage is fetched once per provider within the cache window");
+
   process.env.PASEO_PASSWORD_FILE = "/run/paseo/missing";
   runtime = load();
   await runtime.graph.resolvePassword().then(
@@ -111,4 +135,4 @@ if (failures.length > 0) {
   console.error("Daemon authentication check failed.");
   process.exit(1);
 }
-console.log("  ✓ daemon auth: env, explicit secret file, VM secret, and unauthenticated fallback");
+console.log("  ✓ daemon auth and provider-scoped usage caching behave");

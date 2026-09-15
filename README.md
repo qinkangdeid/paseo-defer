@@ -12,7 +12,7 @@ Messages can be deferred until:
 
 - a delay has elapsed — a `15m`/`1h`/`3h` preset, or **In…** for any wait you type: `3`, `45m`, `2h`, `1h 30m`, up to 30 days (a bare number is minutes);
 - a local time you type into **At…**, in 24-hour form (`21:30`) or with a half of the day (`9:30 pm`); or
-- the Claude rolling usage window resets.
+- the target agent's provider usage window resets.
 
 Both typed fields say out loud what they resolved to — *Sends today at 9:30 PM · in 4h 12m* — before anything is queued. Times are shown and read in whichever clock your device uses, so on an AM/PM device a bare `9:30` in the afternoon means tonight rather than tomorrow morning, and **AM**/**PM** controls are there to pin it.
 
@@ -78,7 +78,7 @@ For a password-protected daemon, set the standard `PASEO_PASSWORD` environment v
 
 Carrying the prompt box across — into the panel, or onto the card's chips — reads the app's own composer-draft storage in the client, for the one session whose **Defer** you pressed and only at that moment. Nothing about it is written, stored, or sent anywhere: the text goes into the message box in front of you, and reaches the daemon only if you queue it.
 
-Delivery and the Claude usage-window read both go through Paseo's own daemon client, which the plugin borrows from the host at runtime rather than bundling. That is what lets `paseo plugin add` work without a package manager, and it keeps the plugin's protocol version identical to the daemon's. Paseo's public plugin SDK does not expose `provider.usage.list`, so this is the only route to the rolling usage window.
+Delivery and the provider usage-window read both go through Paseo's own daemon client, which the plugin borrows from the host at runtime rather than bundling. That is what lets `paseo plugin add` work without a package manager, and it keeps the plugin's protocol version identical to the daemon's. Paseo's public plugin SDK does not expose `provider.usage.list`, so this is the only route to the rolling usage window.
 
 ## License
 

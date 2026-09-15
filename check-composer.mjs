@@ -467,6 +467,7 @@ try {
     changed?.input.trigger?.kind === "after" && changed.input.trigger.ms === 3_600_000,
     "choosing a different option does re-anchor it",
   );
+  check(!("agentId" in changed.input), "an edit leaves the server to resolve its stored target session");
   // --- Text handed over from the session's own composer ---
   composerDraft = "look at the failing test";
   const handed = await harness({

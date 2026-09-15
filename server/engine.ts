@@ -3,6 +3,7 @@ import { store } from "./store";
 import {
   clearCaches,
   fetchSessionResetsAt,
+  getProviderByAgentId,
   readAgentStates,
   withDaemon,
 } from "./daemon";
@@ -33,6 +34,7 @@ function instantOf(value: string | null): number | null {
 export async function resolveDueAt(
   trigger: Trigger,
   createdAt: string,
+  provider: string | null,
 ): Promise<{ dueAt: string | null; anchorResetsAt: string | null }> {
   if (trigger.kind === "after") {
     return { dueAt: new Date(Date.parse(createdAt) + trigger.ms).toISOString(), anchorResetsAt: null };
@@ -40,7 +42,8 @@ export async function resolveDueAt(
   if (trigger.kind === "at") {
     return { dueAt: new Date(trigger.iso).toISOString(), anchorResetsAt: null };
   }
-  const anchor = await fetchSessionResetsAt().catch((error: unknown) => {
+  if (provider === null) return { dueAt: null, anchorResetsAt: null };
+  const anchor = await fetchSessionResetsAt(provider).catch((error: unknown) => {
     console.error("[defer] could not read usage window at create time", String(error));
     return null;
   });
@@ -94,16 +97,29 @@ export async function selectDue(pending: Deferred[], now: number): Promise<Defer
   const due = timed.filter((item) => isTimeDue(item, now));
   if (resets.length === 0) return due;
 
-  let currentResetsAt: string | null;
-  try {
-    // Cached, so this reaches the daemon about once a minute rather than per tick.
-    currentResetsAt = await fetchSessionResetsAt();
-  } catch (error) {
-    console.error("[defer] could not read usage window; reset triggers wait", String(error));
-    return due;
-  }
-  const current = instantOf(currentResetsAt);
   for (const item of resets) {
+    let currentResetsAt: string | null;
+    try {
+      // An item already identifies one session, so use that session's provider
+      // rather than requiring the scheduler's global tick to choose one.
+      const provider = await getProviderByAgentId(item.agentId);
+      if (provider === null) {
+        const { reason } = await store.updatePending(item.id, {
+          state: "failed",
+          error: "The target session is gone.",
+          settledAt: new Date().toISOString(),
+        });
+        if (reason === null) {
+          console.log(`[defer] ${item.id} failed: target session ${item.agentId} is gone`);
+        }
+        continue;
+      }
+      currentResetsAt = await fetchSessionResetsAt(provider);
+    } catch (error) {
+      console.error("[defer] could not read usage window; reset trigger waits", String(error));
+      continue;
+    }
+    const current = instantOf(currentResetsAt);
     const anchor = instantOf(item.anchorResetsAt);
     if (anchor === null) {
       if (currentResetsAt === null) continue;
