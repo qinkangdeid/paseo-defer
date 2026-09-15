@@ -32,6 +32,8 @@ const world = {
   usageLookups: [],
   usageFails: false,
   updates: [],
+  pendingUpdates: [],
+  pendingUpdateReason: null,
   lifecycle: { teardown: null },
 };
 globalThis.__deferCheck = world;
@@ -43,6 +45,10 @@ const STUBS = {
       update: async (id, patch) => {
         globalThis.__deferCheck.updates.push({ id, patch });
         return null;
+      },
+      updatePending: async (id, patch) => {
+        globalThis.__deferCheck.pendingUpdates.push({ id, patch });
+        return { item: null, reason: globalThis.__deferCheck.pendingUpdateReason };
       },
       recoverInterrupted: async () => 0,
     };
@@ -305,18 +311,35 @@ try {
   // including for old unanchored rows that could otherwise wait forever.
   world.providers = new Map();
   world.updates = [];
+  world.pendingUpdates = [];
+  world.pendingUpdateReason = null;
   due = await selectDue(
     [{ ...reset(null, "orphan", "gone-agent"), anchorResetsAt: null, dueAt: null }],
     BEFORE,
   );
   check(due.length === 0, "an orphaned reset is not selected for delivery");
   check(
-    world.updates.length === 1 &&
-      world.updates[0].id === "orphan" &&
-      world.updates[0].patch.state === "failed" &&
-      world.updates[0].patch.error === "The target session is gone.",
+    world.pendingUpdates.length === 1 &&
+      world.pendingUpdates[0].id === "orphan" &&
+      world.pendingUpdates[0].patch.state === "failed" &&
+      world.pendingUpdates[0].patch.error === "The target session is gone.",
     "an orphaned reset is settled as failed instead of waiting forever",
   );
+
+  // The snapshot may be stale by the time the session lookup completes. The
+  // pending-only transition must leave a cancellation that won that race alone.
+  world.pendingUpdates = [];
+  world.pendingUpdateReason = "settled";
+  due = await selectDue(
+    [{ ...reset(null, "cancelled-race", "gone-agent"), anchorResetsAt: null, dueAt: null }],
+    BEFORE,
+  );
+  check(due.length === 0, "an orphan cancelled during selection is not delivered");
+  check(
+    world.pendingUpdates.length === 1 && world.updates.length === 0,
+    "orphan settlement uses the pending-state guard and cannot overwrite cancellation",
+  );
+  world.pendingUpdateReason = null;
   world.providers = new Map([["agent", "provider-a"]]);
 
   world.updates = [];
