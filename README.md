@@ -33,7 +33,7 @@ When a message becomes due, paseo-defer waits for the target agent to become idl
 Requires Paseo 0.8.0 or newer with plugins enabled — enable them in **Settings → Plugins** first if they are off.
 
 ```bash
-paseo plugin add tomgrin10/paseo-defer --ref v2.1.2
+paseo plugin add tomgrin10/paseo-defer --ref v2.1.3
 ```
 
 Omit `--ref` to track `main`.
