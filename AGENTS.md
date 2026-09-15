@@ -148,7 +148,9 @@ Check both a light and a dark theme, and a narrow window for the compact layout.
 
 ## Create a release
 
-- Release user-facing features, bug fixes, compatibility changes, data migrations, or installer changes. Documentation-only edits normally do not need a release.
+- Ordinary feature and bug-fix PRs do not update the package version, lockfile version, README `--ref`, tags, or release notes. Do not block an implementation PR because release metadata is absent.
+- After the intended user-facing features, bug fixes, compatibility changes, data migrations, or installer changes have merged, prepare a separate release-only change from the current clean `main`. One release may contain multiple merged PRs. Documentation-only edits normally do not need a release.
+- Only perform versioning, tagging, publishing, and public-install verification when explicitly asked to create a release.
 - Use SemVer: patch for compatible fixes, minor for backward-compatible features, and major for breaking behavior, storage, or compatibility changes.
 - Update the version in `package.json` and its lockfile, and the `--ref` tag in the README install section. Keep badge styles consistent; update the Paseo minimum only when compatibility changes. `paseo plugin add` is the only supported install path, so there is no installer script to pin.
 - Release notes must include a short summary, user-visible changes, the `paseo plugin add` install command, minimum Paseo version, and any breaking, migration, security, or upgrade considerations. Omit empty sections.
