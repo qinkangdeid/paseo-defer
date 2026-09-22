@@ -1,6 +1,7 @@
 # paseo-defer
 
 [![Paseo](https://img.shields.io/badge/Paseo-%E2%89%A5%200.8.0-8A63D2?style=for-the-badge)](https://paseo.sh)
+[![npm downloads](https://img.shields.io/npm/dm/paseo-defer?style=for-the-badge&color=cb3837)](https://www.npmjs.com/package/paseo-defer)
 [![Release](https://img.shields.io/github/v/release/tomgrin10/paseo-defer?display_name=tag&sort=semver&style=for-the-badge&label=release&color=6366f1)](https://github.com/tomgrin10/paseo-defer/releases/latest)
 [![License](https://img.shields.io/github/license/tomgrin10/paseo-defer?style=for-the-badge&color=2563eb)](LICENSE)
 
@@ -30,13 +31,17 @@ When a message becomes due, paseo-defer waits for the target agent to become idl
 
 ## Install
 
-Requires Paseo 0.8.0 or newer with plugins enabled — enable them in **Settings → Plugins** first if they are off.
+Install from npm on Paseo 0.9.0 or newer:
 
 ```bash
-paseo plugin add tomgrin10/paseo-defer --ref v2.1.4
+paseo plugin install npm:paseo-defer@2.1.5
 ```
 
-Omit `--ref` to track `main`.
+Paseo 0.8 can install the same plugin from Git:
+
+```bash
+paseo plugin add tomgrin10/paseo-defer --ref v2.1.5
+```
 
 Then open a session and press the **Defer** pill above the composer, or press **⌘K** (**Ctrl+K** on Windows/Linux) and choose **Defer a message**.
 
@@ -78,7 +83,7 @@ For a password-protected daemon, set the standard `PASEO_PASSWORD` environment v
 
 Carrying the prompt box across — into the panel, or onto the card's chips — reads the app's own composer-draft storage in the client, for the one session whose **Defer** you pressed and only at that moment. Nothing about it is written, stored, or sent anywhere: the text goes into the message box in front of you, and reaches the daemon only if you queue it.
 
-Delivery and the provider usage-window read both go through Paseo's own daemon client, which the plugin borrows from the host at runtime rather than bundling. That is what lets `paseo plugin add` work without a package manager, and it keeps the plugin's protocol version identical to the daemon's. Paseo's public plugin SDK does not expose `provider.usage.list`, so this is the only route to the rolling usage window.
+Delivery and the provider usage-window read both go through Paseo's own daemon client, which the plugin borrows from the host at runtime rather than bundling. That keeps the plugin's protocol version identical to the daemon's. Paseo's public plugin SDK does not expose `provider.usage.list`, so this is the only route to the rolling usage window.
 
 ## License
 

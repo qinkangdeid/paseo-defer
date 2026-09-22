@@ -14,12 +14,12 @@ One or two sentences describing the release and who benefits.
 ## Install
 
 ```sh
-paseo plugin add tomgrin10/paseo-defer --ref vX.Y.Z
+paseo plugin install npm:paseo-defer@X.Y.Z
 ```
 
 ## Compatibility
 
-- Requires Paseo 0.8.0 or newer.
+- Requires Paseo 0.9.0 or newer for npm installation.
 
 ## Upgrade notes
 
