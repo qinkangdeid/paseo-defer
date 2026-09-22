@@ -1,7 +1,7 @@
 {
   "name": "paseo-defer",
   "type": "module",
-  "version": "2.1.5",
+  "version": "2.1.6",
   "license": "MIT",
   "description": "Defer messages to Paseo coding agents until a chosen time or usage-window reset.",
   "repository": {
@@ -11,7 +11,12 @@
   "homepage": "https://github.com/tomgrin10/paseo-defer#readme",
   "bugs": "https://github.com/tomgrin10/paseo-defer/issues",
   "author": "Tom Gringauz",
-  "keywords": ["paseo", "paseo-plugin", "automation", "productivity"],
+  "keywords": [
+    "paseo",
+    "paseo-plugin",
+    "automation",
+    "productivity"
+  ],
   "files": [
     "paseo-plugin.json",
     "index.client.tsx",
