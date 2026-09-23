@@ -12,6 +12,7 @@ import {
   type Trigger,
 } from "../shared/defer";
 import { pillLabel, queuedLabel, stateLabel } from "../shared/format";
+import { canObserveAgents, followAgents, type AgentList, type AgentUpdate } from "./agents";
 import { offerComposerDraft, readComposerDraft } from "./handoff";
 import { DeferPopoverContent } from "./popover";
 import { notifyDeferChanged, onDeferChanged } from "./refresh";
@@ -426,6 +427,10 @@ export function contributeClient(client: PluginClientContext): PluginCleanup {
   let running = false;
   let queued = false;
   let listedSessions = false;
+  /** A 0.9 observation keeps `sessions` itself; 0.8 reads once, then listens. */
+  const observing = canObserveAgents(client.paseo);
+  /** Whether `pillMode` and the queue have been read at least once. */
+  let readQueue = false;
   let debounce: ReturnType<typeof setTimeout> | null = null;
   /** Dismissal for a pressed preview; owned here so cleanup can release it. */
   let previewTimer: ReturnType<typeof setTimeout> | null = null;
@@ -593,9 +598,7 @@ export function contributeClient(client: PluginClientContext): PluginCleanup {
     }
   }
 
-  async function loadSessions(): Promise<void> {
-    const listed = await client.paseo.agents.list();
-    if (stopped) return;
+  function replaceSessions(listed: AgentList): void {
     sessions.clear();
     for (const entry of listed.entries) {
       const place = placement(entry.agent ?? {});
@@ -603,6 +606,12 @@ export function contributeClient(client: PluginClientContext): PluginCleanup {
       sessions.set(place.agentId, place.workspaceId);
     }
     listedSessions = true;
+  }
+
+  async function loadSessions(): Promise<void> {
+    const listed = await client.paseo.agents.list();
+    if (stopped) return;
+    replaceSessions(listed);
   }
 
   async function sync(): Promise<void> {
@@ -613,8 +622,9 @@ export function contributeClient(client: PluginClientContext): PluginCleanup {
     }
     running = true;
     try {
-      // The subscription keeps the session set current afterwards.
-      if (!listedSessions) await loadSessions();
+      // The subscription keeps the session set current afterwards. An
+      // observation brings its own snapshot, so only the legacy path reads.
+      if (!listedSessions && !observing) await loadSessions();
       const { items, settings } = await client.rpc(listDeferred, {});
       if (stopped) return;
       pillMode = settings.pillMode;
@@ -626,6 +636,7 @@ export function contributeClient(client: PluginClientContext): PluginCleanup {
         else existing.push(item);
       }
       store.replaceItems(byAgent);
+      readQueue = true;
       reconcilePills();
     } catch (error) {
       // A failed read must not kill the entrypoint: the interval retries, and
@@ -648,7 +659,7 @@ export function contributeClient(client: PluginClientContext): PluginCleanup {
     }, DEBOUNCE_MS);
   }
 
-  const unsubscribeAgents = client.paseo.agents.subscribe((update) => {
+  function applyAgentUpdate(update: AgentUpdate): void {
     if (stopped) return;
     if (update.kind === "remove") {
       if (drop(update.agentId)) reconcilePills();
@@ -665,7 +676,23 @@ export function contributeClient(client: PluginClientContext): PluginCleanup {
     if (sessions.get(place.agentId) === place.workspaceId) return;
     sessions.set(place.agentId, place.workspaceId);
     reconcilePills();
-  });
+  }
+
+  const unsubscribeAgents = followAgents(
+    client.paseo,
+    {
+      // First delivery and every reconnect: the snapshot is the whole truth.
+      // Before the first queue read, that read reconciles instead, so a
+      // waiting-only pill mode never flashes a button on every session.
+      snapshot(listed) {
+        if (stopped) return;
+        replaceSessions(listed);
+        if (readQueue) reconcilePills();
+      },
+      update: applyAgentUpdate,
+    },
+    () => client.paseo.agents.subscribe(applyAgentUpdate),
+  );
 
   const unsubscribeChanges = onDeferChanged(scheduleSync);
   const timer = setInterval(() => void sync(), POLL_MS);
