@@ -351,6 +351,7 @@ function createObservingClient({ agents, items, pillMode, queueDelayMs = 0, list
   const lists = [];
   let observer = null;
   let released = 0;
+  let detached = 0;
   let listened = false;
   const snapshotOf = (list) => ({
     requestId: "req",
@@ -366,6 +367,9 @@ function createObservingClient({ agents, items, pillMode, queueDelayMs = 0, list
     },
     get listened() {
       return listened;
+    },
+    get detached() {
+      return detached;
     },
     reconnect(list) {
       observer?.snapshot(snapshotOf(list));
@@ -400,6 +404,7 @@ function createObservingClient({ agents, items, pillMode, queueDelayMs = 0, list
                   observer = next;
                   next.snapshot(snapshotOf(agents()));
                   return () => {
+                    detached += 1;
                     if (observer === next) observer = null;
                   };
                 },
@@ -504,6 +509,7 @@ async function checkObservingClient() {
   await cleanup();
   check(live(fake).length === 0, "0.9: cleanup removes every pill");
   check(fake.lists.every((options) => options.signal.aborted), "0.9: cleanup aborts the observation");
+  check(fake.detached === 2, "0.9: failure and cleanup detach both local observation listeners");
   check(fake.released >= 1, "0.9: cleanup releases the observation");
   check(timers.live.size === 0, "0.9: cleanup releases every timer");
   const afterTeardown = fake.pills.length;

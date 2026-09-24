@@ -58,10 +58,17 @@ export function followAgents(
 
   const lifetime = new AbortController();
   let observation: AgentObservation | null = null;
+  let unsubscribeObservation: (() => void) | null = null;
   let retry: ReturnType<typeof setTimeout> | null = null;
   let retryDelay = RETRY_MIN_MS;
 
+  function detachObserver(): void {
+    unsubscribeObservation?.();
+    unsubscribeObservation = null;
+  }
+
   function reopen(error: unknown): void {
+    detachObserver();
     observation = null;
     if (lifetime.signal.aborted || retry !== null) return;
     console.warn("[defer] agent observation failed; reopening", String(error));
@@ -85,7 +92,7 @@ export function followAgents(
         }
         if (subscription === undefined) throw new Error("the host returned no agent observation");
         observation = subscription;
-        subscription.subscribe({
+        unsubscribeObservation = subscription.subscribe({
           snapshot(list) {
             retryDelay = RETRY_MIN_MS;
             handlers.snapshot(list);
@@ -104,6 +111,7 @@ export function followAgents(
     lifetime.abort();
     if (retry !== null) clearTimeout(retry);
     retry = null;
+    detachObserver();
     void observation?.release().catch(() => undefined);
     observation = null;
   };
