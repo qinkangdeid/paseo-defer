@@ -523,6 +523,28 @@ export function contributeClient(client: PluginClientContext): PluginCleanup {
     return sessions.delete(agentId);
   }
 
+  function applyAgentUpdate(update: AgentUpdate): void {
+    if (stopped) return;
+    if (update.kind === "remove") {
+      if (drop(update.agentId)) reconcilePills();
+      return;
+    }
+    const place = placement(update.agent);
+    if (place === null) {
+      // Reaches here for a session that just closed, which must lose its pill.
+      const agentId = update.agent?.id;
+      if (typeof agentId === "string" && drop(agentId)) reconcilePills();
+      return;
+    }
+    // Agents upsert on every status change; only a placement change matters.
+    if (sessions.get(place.agentId) === place.workspaceId) return;
+    sessions.set(place.agentId, place.workspaceId);
+    // The queue read supplies the saved pill mode. Before it completes the
+    // in-memory default is "always", so reconciling an early update would
+    // briefly flash a pill for users configured for waiting-only mode.
+    if (readQueue) reconcilePills();
+  }
+
   /** Whether this session should be carrying a pill right now. */
   function wanted(agentId: string): boolean {
     if (!sessions.has(agentId)) return false;
@@ -657,25 +679,6 @@ export function contributeClient(client: PluginClientContext): PluginCleanup {
       debounce = null;
       void sync();
     }, DEBOUNCE_MS);
-  }
-
-  function applyAgentUpdate(update: AgentUpdate): void {
-    if (stopped) return;
-    if (update.kind === "remove") {
-      if (drop(update.agentId)) reconcilePills();
-      return;
-    }
-    const place = placement(update.agent);
-    if (place === null) {
-      // Reaches here for a session that just closed, which must lose its pill.
-      const agentId = update.agent?.id;
-      if (typeof agentId === "string" && drop(agentId)) reconcilePills();
-      return;
-    }
-    // Agents upsert on every status change; only a placement change matters.
-    if (sessions.get(place.agentId) === place.workspaceId) return;
-    sessions.set(place.agentId, place.workspaceId);
-    reconcilePills();
   }
 
   const unsubscribeAgents = followAgents(

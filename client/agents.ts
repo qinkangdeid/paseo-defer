@@ -76,7 +76,13 @@ export function followAgents(
     (paseo.agents as unknown as ObservingAgents)
       .list({ subscribe: {}, signal: lifetime.signal })
       .then(({ subscription }) => {
-        if (lifetime.signal.aborted) return;
+        // `AbortSignal` stops a capable host promptly, but a request can still
+        // resolve after cleanup (or a compatibility layer can ignore it). The
+        // returned observation is ours even then, so release it before leaving.
+        if (lifetime.signal.aborted) {
+          void subscription?.release().catch(() => undefined);
+          return;
+        }
         if (subscription === undefined) throw new Error("the host returned no agent observation");
         observation = subscription;
         subscription.subscribe({

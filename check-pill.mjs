@@ -214,8 +214,13 @@ function createFakeClient({ items, agents, pillMode }) {
   const opened = [];
   const created = [];
   let agentHandler = null;
+  let observationHandler = null;
   let unsubscribed = false;
+  let observationSubscribed = false;
+  let observationListenerRemoved = false;
+  let observationReleased = false;
   let listCalls = 0;
+  let lastListOptions;
   return {
     pills,
     opened,
@@ -226,11 +231,32 @@ function createFakeClient({ items, agents, pillMode }) {
     get unsubscribed() {
       return unsubscribed;
     },
+    get observationReleased() {
+      return observationReleased;
+    },
+    get observationSubscribed() {
+      return observationSubscribed;
+    },
+    get observationListenerRemoved() {
+      return observationListenerRemoved;
+    },
+    get lastListOptions() {
+      return lastListOptions;
+    },
     emitAgent(agent) {
       agentHandler?.({ kind: "upsert", agent });
+      observationHandler?.update({ type: "agent_update", payload: { kind: "upsert", agent } });
     },
     emitRemove(agentId) {
       agentHandler?.({ kind: "remove", agentId });
+      observationHandler?.update({ type: "agent_update", payload: { kind: "remove", agentId } });
+    },
+    emitObservationSnapshot(nextAgents) {
+      observationHandler?.snapshot({
+        requestId: "req",
+        entries: nextAgents.map((agent) => ({ agent })),
+        pageInfo: {},
+      });
     },
     client: {
       paseo: {
@@ -239,11 +265,30 @@ function createFakeClient({ items, agents, pillMode }) {
             agentHandler = handler;
             return () => {
               unsubscribed = true;
+              agentHandler = null;
             };
           },
-          async list() {
+          async list(options) {
             listCalls += 1;
-            return { requestId: "req", entries: agents().map((agent) => ({ agent })), pageInfo: {} };
+            lastListOptions = options;
+            return {
+              requestId: "req",
+              entries: agents().map((agent) => ({ agent })),
+              pageInfo: {},
+              subscription: {
+                subscribe(observer) {
+                  observationSubscribed = true;
+                  observationHandler = observer;
+                  return () => {
+                    observationListenerRemoved = true;
+                    observationHandler = null;
+                  };
+                },
+                async release() {
+                  observationReleased = true;
+                },
+              },
+            };
           },
         },
       },
@@ -301,7 +346,7 @@ const live = (fake) => fake.pills.filter((entry) => !entry.removed);
  * The observation hands a new subscriber its current snapshot, as Paseo does,
  * and hands a fresh one again after a reconnect.
  */
-function createObservingClient({ agents, items, pillMode, queueDelayMs = 0 }) {
+function createObservingClient({ agents, items, pillMode, queueDelayMs = 0, listDelayMs = 0 }) {
   const pills = [];
   const lists = [];
   let observer = null;
@@ -344,6 +389,10 @@ function createObservingClient({ agents, items, pillMode, queueDelayMs = 0 }) {
           async list(options) {
             lists.push(options);
             if (!options?.subscribe) throw new Error("an observing client made a plain agent read");
+            // Intentionally ignore the abort signal here. A compatibility
+            // layer or an already-completing request can still resolve after
+            // teardown, and that late observation must be released.
+            if (listDelayMs > 0) await new Promise((r) => globalThis.setTimeout(r, listDelayMs));
             return {
               ...snapshotOf(agents()),
               subscription: {
@@ -471,10 +520,35 @@ async function checkObservingClient() {
     queueDelayMs: 100,
   });
   const stopQuiet = graph.contributeClient(quiet.client);
+  await wait(20);
+  quiet.update({
+    kind: "upsert",
+    agent: { id: "agent-2", workspaceId: "ws-2", status: "initializing" },
+  });
+  await wait(20);
+  check(
+    quiet.pills.length === 0,
+    "0.9: an agent update before the queue read cannot flash an always-mode pill",
+  );
   await wait(300);
   check(quiet.pills.length === 0, "0.9: waiting-only mode never registers a pill for an empty queue");
   await stopQuiet();
   check(timers.live.size === 0, "0.9: the waiting-only entrypoint releases every timer");
+
+  // Cleanup can win the race with the initial list request. If that request
+  // still resolves, its newly-created subscription must not be orphaned.
+  const late = createObservingClient({
+    agents: () => [{ id: "agent-1", workspaceId: "ws-1", status: "idle" }],
+    items: () => [],
+    pillMode: () => "always",
+    listDelayMs: 100,
+  });
+  const stopLate = graph.contributeClient(late.client);
+  await wait(20);
+  await stopLate();
+  await wait(150);
+  check(late.released === 1, "0.9: an observation resolving after cleanup is released");
+  check(timers.live.size === 0, "0.9: late-observation cleanup leaves no timer behind");
 }
 
 /** Stands in for the app's own draft store, which a press reads on the way out. */
@@ -532,6 +606,11 @@ try {
   const cleanup = graph.contributeClient(fake.client);
   check(typeof cleanup === "function", "the entrypoint returns a cleanup function");
   await wait(50);
+  check(
+    fake.lastListOptions === undefined,
+    "0.8: the compatibility path performs a plain agent read",
+  );
+  check(!fake.observationSubscribed, "0.8: the compatibility path opens no owned observation");
 
   // Every live session gets a pill, queue or no queue: it is the plugin's only
   // in-session affordance, and without it Defer is command-centre-only.
@@ -780,7 +859,9 @@ try {
 
   await cleanup();
   check(live(fake).length === 0, "cleanup removes every pill");
-  check(fake.unsubscribed, "cleanup unsubscribes from agent updates");
+  check(fake.unsubscribed, "0.8: cleanup unsubscribes from local agent updates");
+  check(!fake.observationListenerRemoved, "0.8: cleanup has no observation listener to remove");
+  check(!fake.observationReleased, "0.8: cleanup has no observation to release");
   check(timers.live.size === 0, "cleanup releases every timer");
 
   // Nothing may reach Paseo after teardown.
